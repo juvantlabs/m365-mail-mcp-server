@@ -9,6 +9,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Release engineering
+
+- **Publish workflow migrated to pure npm Trusted Publishing (OIDC).**
+  `.github/workflows/publish.yml` — the temporary
+  `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` env block on the publish
+  step (added for v0.1.0's first-publish bootstrap, since npm's "Add
+  Trusted Publisher" UI cannot pre-register a package that doesn't yet
+  exist on npmjs.com) is now removed. After v0.1.0 shipped, the Trusted
+  Publisher was registered on npmjs.com — Publisher: GitHub Actions,
+  Org: `juvantlabs`, Repo: `m365-mail-mcp-server`, Workflow:
+  `publish.yml`, Environment: `production`, Permission: `npm publish` —
+  and from v0.1.1 onward every publish authenticates via the GitHub
+  Actions OIDC token. No static secret to rotate; scope tied to the
+  exact (repo, workflow, environment) tuple. This mirrors the sibling
+  `m365-graph-mcp-server`'s v0.1.0 → v0.1.3 migration but collapsed
+  into a single follow-up PR because the `npm install -g npm@latest`
+  step (which was the pitfall for m365-graph's v0.1.2) was already
+  present in v0.1.0's workflow. Repo secret `NPM_TOKEN` is now
+  redundant and can be revoked/deleted independently.
+
+---
+
 ## [0.1.0] — 2026-07-02
 
 Initial functional release. 13 tools, own-mailbox only, no send.
