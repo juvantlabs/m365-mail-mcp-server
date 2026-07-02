@@ -11,6 +11,92 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] — server-side shared-mailbox allowlist (Shield C1 defense-in-depth)
+
+### Added — v0.2.1
+
+- **`M365_MAIL_ALLOWED_SHARED_USERS` env-var allowlist.** New optional
+  environment variable that gates the v0.2 `shared_user` parameter at
+  the tool boundary, BEFORE any Graph call is made. This is a second,
+  fail-closed enforcement layer on top of Exchange delegation:
+    - **Unset / empty → fail-closed.** Every non-empty `shared_user`
+      value is rejected with a loud, specific error naming the env var.
+      Own-mailbox `/me` calls (`shared_user` omitted) are unaffected.
+    - **`*` sentinel → v0.2 posture.** Explicit opt-in for adopters who
+      want Exchange as the sole gate: any UPN-shaped value is accepted
+      and only Exchange delegation stops the call.
+    - **Comma-separated UPN list → exact allowlist.** Each entry is
+      trimmed and lowercased before membership check, so
+      `Finance@juvant.io` in the env var matches a caller
+      `finance@juvant.io` and vice versa. Non-matching UPN → rejected
+      before any Graph call, never silently downgraded to `/me`.
+  Enforcement point: `validateSharedUser` in `src/tools/_mailbox.ts`,
+  after D1 UPN-shape validation and FUP-2 case normalization, and
+  before the value is returned to any downstream consumer
+  (`mailboxRoot`, spec-hash, sandbox key). Because normalization runs
+  first, the caller sees a shape error for a mis-formed UPN (not a
+  policy error) — the two failure modes are distinct so a mistyped
+  UPN doesn't send the operator chasing an allowlist misconfiguration.
+- **16 new unit tests** in `tests/unit/mailbox.test.ts` pin the
+  invariants: allow-listed UPN passes; non-listed UPN rejected before
+  Graph; unset env → all shared rejected but `/me` still works;
+  empty / whitespace-only env same as unset; `*` restores v0.2
+  Exchange-only behaviour; case-insensitive match in both directions;
+  whitespace trimmed around comma-separated entries; empty entries
+  (trailing comma) don't match empty input; shape check fires BEFORE
+  allowlist check; error messages name `M365_MAIL_ALLOWED_SHARED_USERS`
+  so operators know where to fix policy; unset-env message calls out
+  the `*` opt-in AND that own-mailbox calls are unaffected; and the
+  load-bearing "never silently downgraded to `/me`" confused-deputy
+  invariant.
+- **`tests/setup.ts`** — Vitest global setup file that seeds a
+  `M365_MAIL_ALLOWED_SHARED_USERS=*` default for the test suite. Unit
+  tests that exercise the 13-tool routing composition pass
+  `shared_user: "finance@juvant.io"` as a fixture; they are NOT
+  testing the policy layer, so a test-only wildcard keeps their
+  focus on the behaviour they were written for. Dedicated allowlist
+  tests manage the env var explicitly with `beforeEach` / `afterEach`.
+  Production semantics stay fail-closed on unset — that invariant is
+  exercised by the dedicated tests, not diluted by this default.
+- **README updates.** New env-var row for
+  `M365_MAIL_ALLOWED_SHARED_USERS`; expanded `Shared / delegate
+  mailboxes` section describing the two-layer enforcement model
+  (allowlist → Exchange); new row in the `Common errors` table for the
+  allowlist rejection failure mode; roadmap line for v0.2.1 marked
+  landed.
+- **Schema description.** `SHARED_USER_SCHEMA_PROPERTY.description`
+  now spells out the two-layer enforcement (Exchange + v0.2.1
+  server-side allowlist, fail-closed on unset). Pinned by a new unit
+  test so the wording doesn't silently drift.
+
+### Security — v0.2.1
+
+- The allowlist is defense-in-depth. It DOES NOT replace Exchange
+  delegation; it adds a second, operator-controlled gate that is
+  configured at deploy time (via env var) rather than in Exchange
+  Admin Center. An agent-side compromise or a mis-scoped tool call
+  therefore fails at the server boundary before Graph is touched,
+  even if Exchange would have accepted the delegation.
+- Fail-closed default (unset env → all shared rejected) is a
+  deliberate posture change from v0.2: the safe direction for a
+  server that's forgotten to be configured is to route to `/me`
+  only, not to route anywhere Exchange happens to allow.
+- Own-mailbox `/me` calls are unaffected. An agent that never
+  supplies `shared_user` continues to work bit-for-bit as in v0.2
+  regardless of allowlist configuration.
+
+### Approved via
+
+- CEO decision #227 (adopting the server-side allowlist).
+- `security_audit_log` #84 — Shield concurrence, condition C1
+  (allowlist MUST land before any agent invokes `shared_user` in
+  production).
+- Tracking issue: [#7](https://github.com/juvantlabs/m365-mail-mcp-server/issues/7).
+
+---
+
+## [0.2.0] — shared / delegate mailboxes
+
 ### Added — v0.2 (shared / delegate mailboxes)
 
 - **`shared_user` optional parameter on all 13 tools.** Every tool
@@ -281,4 +367,6 @@ Initial functional release. 13 tools, own-mailbox only, no send.
 
 ---
 
+[0.2.1]: https://github.com/juvantlabs/m365-mail-mcp-server/releases/tag/v0.2.1
+[0.2.0]: https://github.com/juvantlabs/m365-mail-mcp-server/releases/tag/v0.2.0
 [0.1.0]: https://github.com/juvantlabs/m365-mail-mcp-server/releases/tag/v0.1.0

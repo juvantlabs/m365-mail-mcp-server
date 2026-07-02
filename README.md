@@ -12,11 +12,15 @@ Send is a later, Shield-gated phase — see
 
 ## Status
 
-**v0.2 — 13 tools, own mailbox + shared / delegate mailboxes.** Designed
-to be consumed by Juvant OS agents (or any MCP-aware client) via `npx`.
-Every tool accepts an optional `shared_user` UPN parameter to operate
-against a delegated / shared mailbox the caller is authorised on; when
-omitted, tools default to the caller's own mailbox (v0.1 semantics).
+**v0.2.1 — 13 tools, own mailbox + shared / delegate mailboxes (with a
+server-side allowlist gate).** Designed to be consumed by Juvant OS
+agents (or any MCP-aware client) via `npx`. Every tool accepts an
+optional `shared_user` UPN parameter to operate against a delegated /
+shared mailbox the caller is authorised on; when omitted, tools default
+to the caller's own mailbox (v0.1 semantics). A server-side
+`M365_MAIL_ALLOWED_SHARED_USERS` allowlist (v0.2.1) gates every
+non-empty `shared_user` value before any Graph call is made — see the
+env-var table and the `Shared / delegate mailboxes` section below.
 
 Conforms to the handbook
 [`mcp-server.md`](https://github.com/juvantlabs/handbook/blob/main/docs/repo-types/mcp-server.md)
@@ -45,6 +49,7 @@ Optional:
 
 | Variable | Purpose |
 |---|---|
+| `M365_MAIL_ALLOWED_SHARED_USERS` | **v0.2.1 — server-side shared-mailbox allowlist.** Comma-separated list of UPNs a caller is permitted to pass as `shared_user` (e.g. `finance@juvant.io,legal@juvant.io`). Case-insensitive. `*` (single value) restores v0.2 behaviour (any UPN accepted; Exchange is the sole gate). **Unset or empty → fail-closed: every non-empty `shared_user` value is rejected before any Graph call.** Own-mailbox calls (omit `shared_user`) are unaffected. See `§ Shared / delegate mailboxes`. |
 | `M365_MAIL_DOWNLOAD_DIR` | Root for the attachment download sandbox. Default: `$XDG_CACHE_HOME/m365-mail-mcp-server` or `~/.cache/m365-mail-mcp-server`. |
 | `XDG_CACHE_HOME` | Standard XDG cache root; used only as a fallback for the sandbox. |
 | `MCP_SERVER_LOG_LEVEL` | Log level for diagnostics on stderr (default `info`). |
@@ -180,7 +185,7 @@ different `shared_user`) with someone else's token fails with
 [ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md) §D6 for the
 spec-hash invariant.
 
-### Shared / delegate mailboxes (v0.2)
+### Shared / delegate mailboxes (v0.2, allowlist gate v0.2.1)
 
 Every tool accepts an optional `shared_user` parameter:
 
@@ -188,13 +193,30 @@ Every tool accepts an optional `shared_user` parameter:
   GUID user ids are not accepted; a malformed value raises a loud
   error rather than silently defaulting to `/me`.
 - **Omitted**: tool operates on the caller's own mailbox (v0.1
-  behaviour).
+  behaviour). Not affected by the allowlist below.
 - **Set**: Graph call routes to `/users/{shared_user}/…` and requires
   the corresponding `Mail.Read.Shared` / `Mail.ReadWrite.Shared`
   delegated scope granted at the app registration.
-- **Access model**: Exchange enforces per-mailbox access. Passing an
-  arbitrary UPN does NOT grant access; it only routes the call, and
-  Graph returns 403 when the caller has no permission on that mailbox.
+- **Access model — two layers.** In v0.2.1 access is enforced by BOTH
+  of the following, in order:
+    1. **Server-side allowlist** (`M365_MAIL_ALLOWED_SHARED_USERS`
+       env var). Rejection happens at the tool boundary, before any
+       Graph call. **Fail-closed default: if the env var is unset or
+       empty, EVERY non-empty `shared_user` value is rejected.**
+       Configure the env var to a comma-separated list of UPNs the
+       agent may route to, e.g.
+       `M365_MAIL_ALLOWED_SHARED_USERS=finance@juvant.io,legal@juvant.io`.
+       Matches are case-insensitive (`Finance@juvant.io` in the list
+       matches a caller-supplied `finance@juvant.io` and vice versa).
+       The single value `*` disables the gate and restores v0.2
+       Exchange-only enforcement — explicit opt-in for adopters who
+       want Exchange as the sole gate.
+    2. **Exchange itself**. Even for an allow-listed UPN, Exchange
+       enforces per-mailbox access. Passing an allow-listed UPN
+       does NOT grant access; it only routes the call, and Graph
+       returns 403 when the caller has no delegated permission on
+       that mailbox. Rejection at layer 2 is a Graph-level error
+       (see the "Common errors" table).
 - **Shield C4 markers**: still applied on drafts landing in a shared
   mailbox's Drafts folder.
 - **Shield C3 (untrusted-data)**: still applies. Inbound content from a
@@ -232,6 +254,7 @@ input-schema description level and enforced by policy, not by code.
 | `AADSTS65001` / `interaction_required` from MSAL on the FIRST call after upgrading to a version with wider Graph scopes (v0.1 → v0.2, or any future scope widening) | The cached delegated token still carries the OLD scope set. Silent-refresh cannot mint a token for the newly-requested `Mail.Read.Shared` / `Mail.ReadWrite.Shared` scopes until the user has re-consented under the widened set. | Re-run `npm run setup` to re-consent under the widened scope set. If admin consent is required for the shared scopes on your tenant, ask a Global / Cloud App Admin to grant it in the Entra app registration first, then re-run `npm run setup`. |
 | `403 ErrorAccessDenied` on a `/users/{shared_user}/…` call, `shared_user` correctly shaped | The signed-in user has no Exchange permission on that mailbox (not a "Full Access" delegate, or not a shared-mailbox member). The `shared_user` parameter only routes the call — it does not grant access. | Have the mailbox owner (or an Exchange admin) add the signed-in user as a "Full Access" delegate / shared-mailbox member in Exchange Admin Center. |
 | `shared_user` throws `must be a User Principal Name (UPN)` before any network call | The value is a GUID user id, or is missing an `@`, a domain suffix, or contains whitespace / a second `@`. GUID user ids are explicitly rejected by design (see ADR 0002). | Pass the UPN Graph resolves the user to (e.g. `finance@juvant.io`). Casing does not matter — the server lowercases at the input boundary. |
+| `shared_user` throws `M365_MAIL_ALLOWED_SHARED_USERS` before any network call | The env var is unset / empty (fail-closed default, v0.2.1), or is set but does not include the supplied UPN. The allowlist is a server-side gate that fires BEFORE any Graph call, so a rejected UPN never reaches Graph and is never silently downgraded to `/me`. | On the deploying host, set `M365_MAIL_ALLOWED_SHARED_USERS` to a comma-separated list of UPNs the agent may route to (e.g. `finance@juvant.io,legal@juvant.io`), then restart the server. To reproduce v0.2 behaviour (Exchange as sole gate), set the env var to the single value `*`. |
 | `confirmation_token spec_mismatch` on `delete_message` phase-2 | Phase-2 args do not match phase-1 args on `message_id` and/or `shared_user`. The token is bound to the exact spec, including the mailbox routing key. | Re-run phase 1 (omit `confirmation_token`) with the args you actually intend to execute against. Never carry a token across mailboxes. |
 
 ## Binding
@@ -261,6 +284,10 @@ auth model, threat model, performance characteristics, tool catalog).
 - **v0.2 — LANDED.** Shared / delegate mailboxes (`Mail.*.Shared`
   scopes + optional `shared_user` UPN parameter on all 13 tools).
   See [ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md).
+- **v0.2.1 — LANDED.** Server-side `M365_MAIL_ALLOWED_SHARED_USERS`
+  allowlist gating `shared_user` before any Graph call, fail-closed
+  when unset (Shield C1 defense-in-depth on top of Exchange
+  delegation).
 - **v0.3** — `send_draft` tool, Shield-gated per
   [ADR 0001](docs/adr/0001-v0-3-send-gate-contract.md).
 - **v0.3+** — draft attachment upload.
