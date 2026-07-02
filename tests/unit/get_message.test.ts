@@ -253,4 +253,38 @@ describe("getMessageTool handler", () => {
   it("category is 'read'", () => {
     expect(getMessageTool.category).toBe("read");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes to /users/{upn}/messages/{id} when shared_user is set", async () => {
+    const { apiCalls, client } = mockClientWithMessage({
+      id: "m1",
+      subject: "x",
+    });
+    await getMessageTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1");
+  });
+
+  it("echoes shared_user in the response (own → null; shared → UPN)", async () => {
+    const { client: c1 } = mockClientWithMessage({ id: "m1", subject: "x" });
+    const own = await getMessageTool.handler(c1, { message_id: "m1" });
+    expect(parseResponse(own).shared_user).toBeNull();
+
+    const { client: c2 } = mockClientWithMessage({ id: "m1", subject: "x" });
+    const shared = await getMessageTool.handler(c2, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(parseResponse(shared).shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = mockClientWithMessage({ id: "m1", subject: "x" });
+    await expect(
+      getMessageTool.handler(client, { message_id: "m1", shared_user: "bad" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

@@ -110,4 +110,39 @@ describe("listMessagesTool handler", () => {
   it("category is 'read'", () => {
     expect(listMessagesTool.category).toBe("read");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes to /users/{upn}/messages when shared_user is set (no folder_id)", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await listMessagesTool.handler(client, { shared_user: "finance@juvant.io" });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages");
+  });
+
+  it("routes to /users/{upn}/mailFolders/{f}/messages when both shared_user + folder_id", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await listMessagesTool.handler(client, {
+      shared_user: "finance@juvant.io",
+      folder_id: "inbox",
+    });
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/mailFolders/inbox/messages",
+    );
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = captureRequest({ value: [] });
+    const resp = await listMessagesTool.handler(client, {
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await expect(
+      listMessagesTool.handler(client, { shared_user: "not-a-upn" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

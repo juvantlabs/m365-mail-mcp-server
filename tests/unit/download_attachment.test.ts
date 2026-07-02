@@ -97,6 +97,29 @@ describe("deriveSafeLocalPath", () => {
       expect(p.startsWith(sandbox + "/")).toBe(true);
     }
   });
+
+  // ─── v0.2: shared_user folded into the hash ────────────────────────
+  it("produces a different path when shared_user differs but message_id/attachment_id/name are equal", () => {
+    // Graph message ids are mailbox-scoped in practice, but folding
+    // the mailbox routing key into the hash makes the collision
+    // impossible even in pathological cases. This test pins that
+    // guarantee.
+    const own = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf");
+    const shared = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "finance@juvant.io");
+    expect(own).not.toBe(shared);
+  });
+
+  it("two different shared_users produce two different paths", () => {
+    const a = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "one@juvant.io");
+    const b = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "two@juvant.io");
+    expect(a).not.toBe(b);
+  });
+
+  it("omitting shared_user is equivalent to explicitly passing undefined (v0.1 back-compat)", () => {
+    const withUndef = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", undefined);
+    const withoutArg = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf");
+    expect(withUndef).toBe(withoutArg);
+  });
 });
 
 describe("attachmentKind", () => {
@@ -177,5 +200,116 @@ describe("downloadAttachmentTool handler — pre-flight rejection paths", () => 
 
   it("category is 'read'", () => {
     expect(downloadAttachmentTool.category).toBe("read");
+  });
+
+  // ─── v0.2: shared_user rejection paths ─────────────────────────────
+  it("rejects a malformed shared_user before the metadata GET", async () => {
+    const client = mockClient({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      size: 10,
+    });
+    await expect(
+      downloadAttachmentTool.handler(client, {
+        message_id: "m1",
+        attachment_id: "a1",
+        shared_user: "not-a-upn",
+      }),
+    ).rejects.toThrow(/UPN/);
+  });
+});
+
+describe("downloadAttachmentTool handler — shared_user routing", () => {
+  it("routes the metadata GET through /users/{upn}/messages when shared_user is set", async () => {
+    const apiCalls: string[] = [];
+    const get = vi.fn().mockResolvedValue({
+      "@odata.type": "#microsoft.graph.itemAttachment", // reject early to skip the byte fetch
+      size: 10,
+    });
+    const select = vi.fn().mockReturnValue({ get });
+    const api = vi.fn().mockImplementation((path: string) => {
+      apiCalls.push(path);
+      return { select };
+    });
+    const client = { api } as unknown as Client;
+    await expect(
+      downloadAttachmentTool.handler(client, {
+        message_id: "m1",
+        attachment_id: "a1",
+        shared_user: "finance@juvant.io",
+      }),
+    ).rejects.toThrow(/itemAttachment/);
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/messages/m1/attachments/a1",
+    );
+  });
+
+  // ─── v0.2 (FUP-2): UPN case normalization is threaded to routing ───
+  it("routes to the LOWERCASED /users/{upn}/... path even when the caller supplies mixed case", async () => {
+    // Boundary invariant: validateSharedUser lowercases the UPN, and
+    // that single normalized value is what mailboxRoot sees. The
+    // resulting Graph URL therefore never carries the raw casing.
+    const apiCalls: string[] = [];
+    const get = vi.fn().mockResolvedValue({
+      "@odata.type": "#microsoft.graph.itemAttachment", // reject early
+      size: 10,
+    });
+    const select = vi.fn().mockReturnValue({ get });
+    const api = vi.fn().mockImplementation((path: string) => {
+      apiCalls.push(path);
+      return { select };
+    });
+    const client = { api } as unknown as Client;
+    await expect(
+      downloadAttachmentTool.handler(client, {
+        message_id: "m1",
+        attachment_id: "a1",
+        shared_user: "Finance@Juvant.Io",
+      }),
+    ).rejects.toThrow(/itemAttachment/);
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/messages/m1/attachments/a1",
+    );
+  });
+});
+
+// ─── v0.2 (FUP-2): sandbox path collapses across UPN casings ─────────
+//
+// deriveSafeLocalPath is a pure helper — it does NOT know about the
+// case-normalization contract; it just hashes whatever it is given.
+// The invariant is enforced ONE layer up: every caller reaches this
+// helper through validateSharedUser, which lowercases at the input
+// boundary. These tests document both sides of that contract:
+//
+//   (a) if a caller ever bypassed the validator and passed mixed case
+//       directly, the sandbox path WOULD differ — a regression alarm
+//       for anyone who tries to hand-roll the routing;
+//   (b) if a caller goes through the validator (as every tool does),
+//       the effective sandbox path across mixed vs lowercase casings
+//       is identical.
+describe("deriveSafeLocalPath + validateSharedUser — cross-case sandbox path stability", () => {
+  const sandbox = "/sandbox/tenant-x";
+
+  it("(contract-alarm) helper alone is case-SENSITIVE — mixed case would fork the path", () => {
+    const mixed = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "Finance@Juvant.Io");
+    const lower = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "finance@juvant.io");
+    // If this ever starts to pass with `.toBe(...)`, someone added a
+    // second normalization pass in the helper and the two-layer
+    // contract has collapsed — audit before removing this test.
+    expect(mixed).not.toBe(lower);
+  });
+
+  it("(invariant) validator-normalized value collapses mixed and lowercase to the SAME sandbox path", async () => {
+    // Re-import via dynamic import to avoid pulling _mailbox into the
+    // module-level import graph of this handler test file, which
+    // exercises a different concern.
+    const { validateSharedUser } = await import("../../src/tools/_mailbox.js");
+
+    const normMixed = validateSharedUser("Finance@Juvant.Io");
+    const normLower = validateSharedUser("finance@juvant.io");
+    expect(normMixed).toBe(normLower);
+
+    const pathMixed = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", normMixed);
+    const pathLower = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", normLower);
+    expect(pathMixed).toBe(pathLower);
   });
 });

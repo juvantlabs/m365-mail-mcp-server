@@ -105,4 +105,49 @@ describe("createDraftTool handler", () => {
   it("category is 'write_idempotent'", () => {
     expect(createDraftTool.category).toBe("write_idempotent");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("POSTs to /users/{upn}/messages when shared_user is set", async () => {
+    const { apiCalls, client } = captureRequest(validResponse);
+    await createDraftTool.handler(client, {
+      subject: "x",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls).toEqual(["/users/finance%40juvant.io/messages"]);
+  });
+
+  it("still attaches Shield C4 header on shared-mailbox drafts", async () => {
+    // The header applies regardless of which mailbox the draft lands
+    // in — an agent-authored draft in finance@'s Drafts folder should
+    // still be visually distinguishable to that mailbox's other
+    // delegates.
+    const { bodies, client } = captureRequest(validResponse);
+    await createDraftTool.handler(client, {
+      subject: "x",
+      shared_user: "finance@juvant.io",
+    });
+    expect(bodies[0].internetMessageHeaders).toEqual([
+      { name: "X-Juvant-Agent-Author", value: "@juvantlabs/m365-mail-mcp-server" },
+    ]);
+    expect(bodies[0].subject).toBe("[agent-draft] x");
+  });
+
+  it("echoes shared_user in the response and adjusts the note", async () => {
+    const { client } = captureRequest(validResponse);
+    const resp = await createDraftTool.handler(client, {
+      subject: "x",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+    expect(parsed.note).toContain("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest(validResponse);
+    await expect(
+      createDraftTool.handler(client, { subject: "x", shared_user: "bad" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

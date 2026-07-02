@@ -16,7 +16,7 @@ Microsoft 365 Outlook Mail via delegated Microsoft Graph:
 
 ## Scope
 
-### In scope for v0.1
+### In scope for v0.2
 
 - Own mailbox reads: folders, messages, attachments (metadata +
   bytes).
@@ -24,24 +24,35 @@ Microsoft 365 Outlook Mail via delegated Microsoft Graph:
   mark-read toggle, folder moves.
 - Own mailbox delete: soft delete via `DELETE /me/messages/{id}` (→
   Deleted Items). Two-phase confirmation-token gate.
+- **Shared / delegate mailbox equivalents** of every read and
+  idempotent-write and irreversible-write operation, routed via an
+  optional `shared_user` UPN parameter. Graph URL routes from
+  `/me/…` to `/users/{shared_user}/…`. Requires the delegated
+  `Mail.Read.Shared` / `Mail.ReadWrite.Shared` scopes on the app
+  registration; Exchange still enforces per-mailbox access. See
+  `docs/adr/0002-v0-2-shared-mailbox-parameter.md`.
 
-### Out of scope for v0.1 (deliberate)
+### Out of scope for v0.2 (deliberate)
 
-- **Sending mail** (`Mail.Send`). Deferred to v0.3, gated by ADR 0001
-  (see `docs/adr/0001-v0-3-send-gate-contract.md`). Neither the scope
-  nor any send tool is registered here; a CI invariant fails the
-  build if a send path leaks in without a consumed confirmation-token.
-- **Shared / delegate mailboxes** (`Mail.Read.Shared`,
-  `Mail.ReadWrite.Shared`). Deferred to v0.2. The v0.1 tool schema
-  intentionally has NO `shared_user` parameter — this is enforced by
-  `tests/unit/registry.test.ts`.
+- **Sending mail** (`Mail.Send`, `/me/sendMail`). Deferred to v0.3,
+  gated by ADR 0001 (see `docs/adr/0001-v0-3-send-gate-contract.md`).
+  Neither the scope nor any send tool is registered here; a CI
+  invariant fails the build if a send path leaks in without a
+  consumed confirmation-token.
+- **Sending as another mailbox** (`Mail.Send.Shared`). Explicitly
+  beyond v0.3 per ADR 0001 §D7. v0.2 read + draft on shared mailboxes
+  only.
+- **Application (app-only) permissions.** v0.2 stays delegated-only,
+  same auth flow as v0.1. Moving to app-only would collapse the
+  identity boundary the whole security model is built on.
 - **Draft attachment upload**. Requires the Graph upload-session flow
   (large attachments) and its own security review of local-file
   provenance. Deferred to v0.3+.
-- **OneDrive / SharePoint / Calendar / Meeting transcripts**. Handled
-  by the sibling `@juvantlabs/m365-graph-mcp-server`. Cross-server
-  scope leakage would be a security regression; see § Isolation from
-  sibling server.
+- **OneDrive / SharePoint / Calendar / Meeting transcripts** (including
+  their `.Shared` scope equivalents). Handled by the sibling
+  `@juvantlabs/m365-graph-mcp-server`. Cross-server scope leakage —
+  even under `.Shared` — would be a security regression; see
+  § Isolation from sibling server.
 
 ## Authentication
 
@@ -65,6 +76,8 @@ Microsoft 365 Outlook Mail via delegated Microsoft Graph:
 User.Read
 Mail.Read
 Mail.ReadWrite
+Mail.Read.Shared        (v0.2)
+Mail.ReadWrite.Shared   (v0.2)
 offline_access
 ```
 
@@ -72,6 +85,11 @@ Deliberately narrow. `Mail.ReadWrite` subsumes `Mail.Read` at the
 scope level, but Microsoft's admin consent screen renders both when
 requested, so we list only the ones actually needed. `offline_access`
 is required to receive a refresh token.
+
+The `.Shared` scopes are new in v0.2 and permit routing calls to
+`/users/{upn}/…` when the `shared_user` tool parameter is set. They
+do NOT grant access on their own — Exchange still enforces per-
+mailbox permissions on the target UPN.
 
 ### Isolation from sibling server
 
@@ -83,7 +101,7 @@ Independent isolation layers:
 | Env-var prefix | `M365_MAIL_*` | `M365_*` |
 | Keychain service name | `juvantlabs-m365-mail-mcp-server` | `juvantlabs-m365-graph-mcp-server` |
 | Download-sandbox subdir | `m365-mail-mcp-server/<tenant>/` | `m365-graph-mcp-server/<tenant>/` |
-| Delegated scopes requested | Only `Mail.*` (+ `User.Read`, `offline_access`) | Only `Files.*` / `Sites.*` / `Calendars.*` / meeting scopes |
+| Delegated scopes requested | Only `Mail.*` (incl. `Mail.*.Shared` in v0.2; + `User.Read`, `offline_access`) | Only `Files.*` / `Sites.*` / `Calendars.*` / meeting scopes |
 
 The env-var namespacing is the load-bearing guard: a config-file typo
 that reaches the wrong server is caught by startup validation
@@ -169,6 +187,14 @@ Per the 2026-07-02 Shield review of the Azure app PR:
 
 ## Tool catalog
 
+Every tool below also accepts an optional `shared_user` UPN parameter
+(v0.2). When set, the tool routes its Graph URL to
+`/users/{shared_user}/…` instead of `/me/…`. The composition helper
+lives in `src/tools/_mailbox.ts` (`mailboxRoot(sharedUser)`); every
+tool imports it and threads the returned root into its Graph URL.
+Access is enforced by Exchange, not by the parameter — see
+[ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md).
+
 ### Read tools
 
 | Tool | Underlying API call | Key input | Output shape | Notes |
@@ -241,3 +267,4 @@ A baseline (see `tests/unit/permission_surface.test.ts`).
 - [Handbook ADR 0004 — agent action guardrails](https://github.com/juvantlabs/handbook/blob/main/docs/adr/0004-agent-action-guardrails.md)
 - [Sibling reference: `juvantlabs/m365-graph-mcp-server`](https://github.com/juvantlabs/m365-graph-mcp-server)
 - [In-repo `docs/adr/0001-v0-3-send-gate-contract.md`](docs/adr/0001-v0-3-send-gate-contract.md)
+- [In-repo `docs/adr/0002-v0-2-shared-mailbox-parameter.md`](docs/adr/0002-v0-2-shared-mailbox-parameter.md)

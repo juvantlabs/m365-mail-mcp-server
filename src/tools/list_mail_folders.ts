@@ -3,29 +3,39 @@
  *
  * List the top-level mail folders in the user's mailbox (Inbox,
  * Drafts, Sent Items, Deleted Items, plus user-created folders).
- * Wraps Graph `GET /me/mailFolders`.
+ * Wraps Graph `GET /me/mailFolders` (or `/users/{upn}/mailFolders`
+ * when `shared_user` is set — v0.2).
  *
  * Required Graph scope: `Mail.Read` (delegated). Read-only.
+ * When `shared_user` is set, also requires `Mail.Read.Shared` (v0.2).
  *
  * NOTE: this returns top-level folders only. Nested child folders are
  * not expanded in v0.1 — pass a folder's id to `list_messages` to see
  * its contents. Discovery of child folders can be added later without
- * a breaking change (v0.2+).
+ * a breaking change.
  *
- * The tool has NO scopable input parameter (it enumerates the caller's
- * full folder surface) and is intentionally on the permission-surface
- * NO_TARGET_TOOLS allowlist. See tests/unit/permission_surface.test.ts.
+ * The tool's only scopable input parameter is `shared_user` (v0.2).
+ * Without it, the tool enumerates the caller's full folder surface;
+ * with it, the shared user's — but the shape "enumerate a mailbox's
+ * top-level folders" is still non-message-scopable, so the tool
+ * remains on the permission-surface NO_TARGET_TOOLS allowlist. See
+ * tests/unit/permission_surface.test.ts.
  */
 
 import type { Client } from "@microsoft/microsoft-graph-client";
 
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import { validateOptionalInteger } from "../types/validators.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const definition: ToolDefinition = {
   name: "m365-mail:list_mail_folders",
   description:
-    "List the top-level mail folders (Inbox, Drafts, Sent Items, Deleted Items, plus user-created folders). Read-only. Use the returned folder id with list_messages / move_message to scope to a specific folder. Well-known folder names (e.g. 'inbox', 'drafts', 'sentitems', 'deleteditems') also work as folder_id shortcuts in downstream tools.",
+    "List the top-level mail folders (Inbox, Drafts, Sent Items, Deleted Items, plus user-created folders). Read-only. Use the returned folder id with list_messages / move_message to scope to a specific folder. Well-known folder names (e.g. 'inbox', 'drafts', 'sentitems', 'deleteditems') also work as folder_id shortcuts in downstream tools. Pass `shared_user` to enumerate folders on a shared / delegate mailbox instead of the caller's own (v0.2, requires Mail.Read.Shared).",
   inputSchema: {
     type: "object",
     properties: {
@@ -35,6 +45,7 @@ const definition: ToolDefinition = {
         maximum: 100,
         description: "Maximum number of folders to return (default 50).",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: [],
   },
@@ -69,9 +80,11 @@ const handler: ToolHandler = async (
     max: 100,
     default: 50,
   });
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const response = await graph
-    .api("/me/mailFolders")
+    .api(`${root}/mailFolders`)
     .select("id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount")
     .top(limit)
     .get();
@@ -81,6 +94,7 @@ const handler: ToolHandler = async (
   const result = {
     count: folders.length,
     folders,
+    shared_user: sharedUser ?? null,
   };
 
   return {

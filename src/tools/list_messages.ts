@@ -4,9 +4,10 @@
  * List messages in a mail folder, ordered by receivedDateTime desc
  * (newest first). Wraps Graph
  * `GET /me/mailFolders/{folder}/messages` (or `/me/messages` when no
- * folder_id is given).
+ * folder_id is given), routed via `mailboxRoot(shared_user)` (v0.2).
  *
  * Required Graph scope: `Mail.Read` (delegated). Read-only.
+ * When `shared_user` is set, also requires `Mail.Read.Shared` (v0.2).
  *
  * Body is intentionally NOT returned by this tool — use `get_message`
  * to fetch a single message's full body. The `body_preview` field
@@ -17,6 +18,11 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
 
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   validateOptionalInteger,
   validateOptionalString,
 } from "../types/validators.js";
@@ -25,14 +31,14 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:list_messages",
   description:
-    "List messages in a mail folder, newest first (by receivedDateTime desc). Returns metadata + body_preview only — use get_message for a specific message's full body. Read-only. Well-known folder shortcuts accepted: 'inbox', 'drafts', 'sentitems', 'deleteditems'.",
+    "List messages in a mail folder, newest first (by receivedDateTime desc). Returns metadata + body_preview only — use get_message for a specific message's full body. Read-only. Well-known folder shortcuts accepted: 'inbox', 'drafts', 'sentitems', 'deleteditems'. Pass `shared_user` to list messages on a shared / delegate mailbox instead of the caller's own (v0.2, requires Mail.Read.Shared).",
   inputSchema: {
     type: "object",
     properties: {
       folder_id: {
         type: "string",
         description:
-          "Optional folder id from list_mail_folders, or a well-known name ('inbox', 'drafts', 'sentitems', 'deleteditems'). Omit to search across all folders (/me/messages).",
+          "Optional folder id from list_mail_folders, or a well-known name ('inbox', 'drafts', 'sentitems', 'deleteditems'). Omit to search across all folders (/me/messages or /users/{shared_user}/messages).",
       },
       limit: {
         type: "integer",
@@ -40,6 +46,7 @@ const definition: ToolDefinition = {
         maximum: 100,
         description: "Maximum messages to return (default 25).",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: [],
   },
@@ -112,10 +119,12 @@ const handler: ToolHandler = async (
     max: 100,
     default: 25,
   });
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const apiBase = folderId
-    ? `/me/mailFolders/${encodeURIComponent(folderId)}/messages`
-    : "/me/messages";
+    ? `${root}/mailFolders/${encodeURIComponent(folderId)}/messages`
+    : `${root}/messages`;
 
   const response = await graph
     .api(apiBase)
@@ -129,6 +138,7 @@ const handler: ToolHandler = async (
 
   const result = {
     folder_id: folderId ?? null,
+    shared_user: sharedUser ?? null,
     count: messages.length,
     messages,
   };

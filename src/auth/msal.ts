@@ -29,18 +29,29 @@ import { getTokenStore } from "./keyring.js";
  * Delegated scopes the MCP server requests. Order is irrelevant; MSAL
  * normalizes. `offline_access` is required to get a refresh token.
  *
- * v0.1 scope set — deliberately narrow:
- *   - User.Read           : identity ping (whoami / setup validation)
- *   - Mail.Read           : list folders/messages, get message + attachments
- *   - Mail.ReadWrite      : create/update/move/delete drafts + messages
- *                           (covers the write_idempotent tools + delete)
- *   - offline_access      : refresh token so the server can run
- *                           unattended after `npm run setup`
+ * v0.2 scope set — v0.1 baseline plus shared / delegate mailbox scopes:
+ *   - User.Read              : identity ping (whoami / setup validation)
+ *   - Mail.Read              : list folders/messages, get message + attachments
+ *                              on the caller's own mailbox
+ *   - Mail.ReadWrite         : create/update/move/delete drafts + messages
+ *                              on the caller's own mailbox
+ *   - Mail.Read.Shared       : read equivalents against a shared / delegate
+ *                              mailbox the caller has been granted access
+ *                              to (routed via `/users/{upn}/…`)
+ *   - Mail.ReadWrite.Shared  : write-side equivalents (draft authoring,
+ *                              mark-read, move, delete) against a shared /
+ *                              delegate mailbox
+ *   - offline_access         : refresh token so the server can run
+ *                              unattended after `npm run setup`
  *
- * NOT included (deliberate):
- *   - Mail.Send / Mail.Send.Shared    → v0.3 (Shield-gated send)
- *   - Mail.Read.Shared / .ReadWrite.Shared → v0.2 (delegate mailboxes)
+ * NOT included (deliberate — still out per v0.2 boundary):
+ *   - Mail.Send                       → v0.3 (Shield-gated send)
+ *   - Mail.Send.Shared                → beyond v0.3 (ADR 0001 §D7)
  *   - Files.* / Sites.* / Calendars.* → belong to `m365-graph-mcp-server`
+ *
+ * The `.Shared` scopes only permit routing — access is still enforced
+ * per-mailbox by Exchange (the caller must have Full Access / delegate
+ * permissions on the target mailbox). This server does NOT elevate.
  *
  * CI Layer A (permission-mutation surface invariant) treats any
  * *.Manage.All / *.FullControl.All / Application.ReadWrite.All scope as
@@ -50,6 +61,8 @@ export const DELEGATED_SCOPES = [
   "User.Read",
   "Mail.Read",
   "Mail.ReadWrite",
+  "Mail.Read.Shared",
+  "Mail.ReadWrite.Shared",
   "offline_access",
 ];
 

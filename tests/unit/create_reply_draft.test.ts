@@ -98,4 +98,61 @@ describe("createReplyDraftTool handler", () => {
   it("category is 'write_idempotent'", () => {
     expect(createReplyDraftTool.category).toBe("write_idempotent");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("POSTs createReply on /users/{upn}/messages when shared_user is set", async () => {
+    const { apiCalls, client } = makeClient({
+      createReplyReturns: { id: "d1", subject: "RE: x" },
+      patchReturns: { id: "d1", subject: "[agent-draft] RE: x" },
+    });
+    await createReplyDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1/createReply");
+  });
+
+  it("PATCHes the resulting draft under the same shared mailbox root", async () => {
+    // The subject PATCH that applies the Shield marker must hit the
+    // shared mailbox's copy of the draft, not /me/messages/{id}.
+    const { apiCalls, client } = makeClient({
+      createReplyReturns: { id: "reply-draft-1", subject: "RE: x" },
+      patchReturns: { id: "reply-draft-1", subject: "[agent-draft] RE: x" },
+    });
+    await createReplyDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    // apiCalls[1] is the PATCH target.
+    expect(apiCalls[1]).toBe(
+      "/users/finance%40juvant.io/messages/reply-draft-1",
+    );
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = makeClient({
+      createReplyReturns: { id: "d1", subject: "RE: x" },
+      patchReturns: { id: "d1", subject: "[agent-draft] RE: x" },
+    });
+    const resp = await createReplyDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = makeClient({
+      createReplyReturns: { id: "d1" },
+      patchReturns: { id: "d1" },
+    });
+    await expect(
+      createReplyDraftTool.handler(client, {
+        message_id: "m1",
+        shared_user: "bad",
+      }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

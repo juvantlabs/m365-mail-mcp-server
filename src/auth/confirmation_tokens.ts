@@ -34,9 +34,23 @@ interface PendingConfirmation {
 const pending: Map<string, PendingConfirmation> = new Map();
 
 function canonicalize(spec: Record<string, unknown>): string {
-  // Stable JSON: keys sorted alphabetically. Sufficient for our specs
-  // which are flat objects of primitives (strings, numbers, booleans);
-  // we don't need full recursive canonicalization.
+  // Stable JSON: keys sorted alphabetically at the TOP LEVEL only.
+  // This shallow canonicalization is INTENTIONAL, not an oversight —
+  // every current caller (as of v0.2: only `delete_message`) ships a
+  // flat spec of primitives (e.g. `{ message_id, shared_user }`) where
+  // top-level key sorting is sufficient to produce a byte-stable hash
+  // input.
+  //
+  // WARNING for future `write_irreversible` tools: if a NEW spec ever
+  // ships with a nested object (e.g. a bulk-delete tool with
+  // `{ filter: { folder_id, subject_contains } }`) or an array field,
+  // this function MUST be upgraded to recurse — sort keys at every
+  // level, and canonicalize arrays element-wise. Without that upgrade,
+  // two semantically identical nested specs whose sub-object keys were
+  // inserted in different orders would hash differently, and the
+  // spec-hash security property would silently break for that tool.
+  // Add the recursion together with the tool, not after; and pin the
+  // invariant with a test comparing `{a:{x:1,y:2}}` vs `{a:{y:2,x:1}}`.
   const sortedKeys = Object.keys(spec).sort();
   const sorted: Record<string, unknown> = {};
   for (const k of sortedKeys) sorted[k] = spec[k];

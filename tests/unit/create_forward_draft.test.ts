@@ -93,4 +93,60 @@ describe("createForwardDraftTool handler", () => {
   it("category is 'write_idempotent'", () => {
     expect(createForwardDraftTool.category).toBe("write_idempotent");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("POSTs createForward on /users/{upn}/messages when shared_user is set", async () => {
+    const { apiCalls, client } = makeClient({
+      createForwardReturns: { id: "d1", subject: "FW: x" },
+      patchReturns: { id: "d1" },
+    });
+    await createForwardDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/messages/m1/createForward",
+    );
+  });
+
+  it("PATCHes the resulting draft under the same shared mailbox root", async () => {
+    const { apiCalls, client } = makeClient({
+      createForwardReturns: { id: "fwd-draft-1", subject: "FW: x" },
+      patchReturns: { id: "fwd-draft-1" },
+    });
+    await createForwardDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[1]).toBe(
+      "/users/finance%40juvant.io/messages/fwd-draft-1",
+    );
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = makeClient({
+      createForwardReturns: { id: "d1", subject: "FW: x" },
+      patchReturns: { id: "d1" },
+    });
+    const resp = await createForwardDraftTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = makeClient({
+      createForwardReturns: { id: "d1" },
+      patchReturns: { id: "d1" },
+    });
+    await expect(
+      createForwardDraftTool.handler(client, {
+        message_id: "m1",
+        shared_user: "bad",
+      }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

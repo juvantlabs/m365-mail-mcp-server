@@ -81,4 +81,53 @@ describe("searchMessagesTool handler", () => {
   it("category is 'read'", () => {
     expect(searchMessagesTool.category).toBe("read");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes to /users/{upn}/messages when shared_user is set", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await searchMessagesTool.handler(client, {
+      query: "invoice",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages");
+  });
+
+  it("routes to /users/{upn}/mailFolders/{f}/messages when both shared_user + folder_id", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await searchMessagesTool.handler(client, {
+      query: "invoice",
+      shared_user: "finance@juvant.io",
+      folder_id: "inbox",
+    });
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/mailFolders/inbox/messages",
+    );
+  });
+
+  it("still sends ConsistencyLevel: eventual on shared mailboxes", async () => {
+    const { headers, client } = captureRequest({ value: [] });
+    await searchMessagesTool.handler(client, {
+      query: "x",
+      shared_user: "finance@juvant.io",
+    });
+    expect(headers).toContainEqual(["ConsistencyLevel", "eventual"]);
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = captureRequest({ value: [] });
+    const resp = await searchMessagesTool.handler(client, {
+      query: "x",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await expect(
+      searchMessagesTool.handler(client, { query: "x", shared_user: "bad" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

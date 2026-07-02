@@ -23,13 +23,18 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
 
 import { summarizeMessage } from "./list_messages.js";
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import { validateRequiredString } from "../types/validators.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const definition: ToolDefinition = {
   name: "m365-mail:move_message",
   description:
-    "Move a message to a different mail folder. destination_folder_id accepts folder ids from list_mail_folders or well-known names ('inbox', 'drafts', 'sentitems', 'deleteditems', 'archive', 'junkemail'). Reversible.",
+    "Move a message to a different mail folder. destination_folder_id accepts folder ids from list_mail_folders or well-known names ('inbox', 'drafts', 'sentitems', 'deleteditems', 'archive', 'junkemail'). Reversible. Pass `shared_user` to move a message within a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); both the source and destination folder resolve within that mailbox.",
   inputSchema: {
     type: "object",
     properties: {
@@ -41,6 +46,7 @@ const definition: ToolDefinition = {
         type: "string",
         description: "Destination folder id or well-known name.",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id", "destination_folder_id"],
   },
@@ -55,9 +61,11 @@ const handler: ToolHandler = async (
     args.destination_folder_id,
     "destination_folder_id",
   );
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const moved = (await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}/move`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}/move`)
     .post({ destinationId: destinationFolderId })) as Record<string, unknown>;
 
   const summary = summarizeMessage(moved);
@@ -71,6 +79,7 @@ const handler: ToolHandler = async (
             moved: summary,
             source_message_id: messageId,
             destination_folder_id: destinationFolderId,
+            shared_user: sharedUser ?? null,
             note: "The moved message has a NEW id (Graph reissues ids on move). Use the returned `moved.id` for follow-up calls.",
           },
           null,

@@ -56,6 +56,11 @@ import { pipeline } from "node:stream/promises";
 import type { Client } from "@microsoft/microsoft-graph-client";
 
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   sanitizeFilename,
   validateRequiredString,
 } from "../types/validators.js";
@@ -68,7 +73,7 @@ const SANDBOX_FILE_MODE = 0o600;
 const definition: ToolDefinition = {
   name: "m365-mail:download_attachment",
   description:
-    "Download a fileAttachment's bytes to a local sandbox directory. Returns the local path, not the file content — agents read the file via a filesystem-aware tool. Size capped at 200 MB. Rejects itemAttachment / referenceAttachment kinds with an explicit error. Read-only on the cloud side.",
+    "Download a fileAttachment's bytes to a local sandbox directory. Returns the local path, not the file content — agents read the file via a filesystem-aware tool. Size capped at 200 MB. Rejects itemAttachment / referenceAttachment kinds with an explicit error. Read-only on the cloud side. Pass `shared_user` to download an attachment from a message in a shared / delegate mailbox (v0.2, requires Mail.Read.Shared).",
   inputSchema: {
     type: "object",
     properties: {
@@ -80,6 +85,7 @@ const definition: ToolDefinition = {
         type: "string",
         description: "Attachment id from list_attachments.",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id", "attachment_id"],
   },
@@ -95,13 +101,33 @@ export function getSandboxRoot(tenantId: string): string {
   return path.resolve(os.homedir(), ".cache", "m365-mail-mcp-server", tenantId);
 }
 
+/**
+ * Derive the safe local path for a downloaded attachment.
+ *
+ * v0.2 change: `sharedUser` is folded into the hash key so a download
+ * of message A/attachment X from the caller's own mailbox and the same
+ * ids from a shared mailbox produce distinct local paths. Graph message
+ * ids are unique per mailbox in practice, but hashing the mailbox
+ * routing key ("me" or the UPN) makes the deterministic path collision-
+ * proof even in the pathological case.
+ *
+ * Backward-compatibility note: the hash prefix format is preserved
+ * (still `<hex16>-<sanitized-name>`), so callers can still identify
+ * downloaded files by name shape. The bytes of the hash change from
+ * v0.1 (no mailbox routing key was included) — this is not a semver
+ * break because the local sandbox is treated as an implementation
+ * detail (each subprocess writes to it; agents read via the returned
+ * `local_path`; no caller pins the exact hash).
+ */
 export function deriveSafeLocalPath(
   sandboxRoot: string,
   messageId: string,
   attachmentId: string,
   originalName: string,
+  sharedUser?: string,
 ): string {
-  const key = `${messageId}::${attachmentId}`;
+  const mailboxKey = sharedUser ?? "me";
+  const key = `${mailboxKey}::${messageId}::${attachmentId}`;
   const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
   const safe = sanitizeFilename(originalName);
   const filename = `${hash}-${safe}`;
@@ -131,9 +157,11 @@ const handler: ToolHandler = async (
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
   const attachmentId = validateRequiredString(args.attachment_id, "attachment_id");
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const metaPath =
-    `/me/messages/${encodeURIComponent(messageId)}` +
+    `${root}/messages/${encodeURIComponent(messageId)}` +
     `/attachments/${encodeURIComponent(attachmentId)}`;
 
   const meta = (await graph
@@ -147,7 +175,7 @@ const handler: ToolHandler = async (
     // Include the kind so the agent can act on it.
     throw new Error(
       `attachment kind '${kind}' is not downloadable via this tool ` +
-        `(only fileAttachment is supported in v0.1). ` +
+        `(only fileAttachment is supported). ` +
         `itemAttachment is an embedded Outlook item; ` +
         `referenceAttachment is a cloud-file link (use m365-graph-mcp-server for those).`,
     );
@@ -169,6 +197,7 @@ const handler: ToolHandler = async (
     messageId,
     attachmentId,
     String(meta.name ?? "attachment"),
+    sharedUser,
   );
 
   // Stream bytes from `/$value`. Graph client returns a Node Readable
@@ -183,6 +212,7 @@ const handler: ToolHandler = async (
   const result = {
     message_id: messageId,
     attachment_id: attachmentId,
+    shared_user: sharedUser ?? null,
     local_path: localPath,
     size_bytes: size,
     name: String(meta.name ?? ""),

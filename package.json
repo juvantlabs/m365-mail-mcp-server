@@ -1,6 +1,6 @@
 {
   "name": "@juvantlabs/m365-mail-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Microsoft 365 Outlook Mail via delegated Microsoft Graph: read messages, folders and attachments, and author/manage drafts (send is a later gated phase).",
   "license": "MIT",
   "author": "Juvant Srls",

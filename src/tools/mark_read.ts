@@ -15,6 +15,11 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
 
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   validateOptionalBoolean,
   validateRequiredString,
 } from "../types/validators.js";
@@ -23,7 +28,7 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:mark_read",
   description:
-    "Mark a message as read (default) or unread. Idempotent. Returns the message id + new is_read state.",
+    "Mark a message as read (default) or unread. Idempotent. Returns the message id + new is_read state. Pass `shared_user` to mark a message in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared).",
   inputSchema: {
     type: "object",
     properties: {
@@ -35,6 +40,7 @@ const definition: ToolDefinition = {
         type: "boolean",
         description: "Target state. Default true (mark as read).",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -46,9 +52,11 @@ const handler: ToolHandler = async (
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
   const isRead = validateOptionalBoolean(args.is_read, "is_read") ?? true;
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const updated = (await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}`)
     .patch({ isRead })) as Record<string, unknown>;
 
   return {
@@ -58,6 +66,7 @@ const handler: ToolHandler = async (
         text: JSON.stringify(
           {
             message_id: messageId,
+            shared_user: sharedUser ?? null,
             is_read: Boolean(updated.isRead ?? isRead),
           },
           null,

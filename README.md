@@ -12,8 +12,11 @@ Send is a later, Shield-gated phase — see
 
 ## Status
 
-**v0.1 — 13 tools, own mailbox only.** Designed to be consumed by Juvant
-OS agents (or any MCP-aware client) via `npx`.
+**v0.2 — 13 tools, own mailbox + shared / delegate mailboxes.** Designed
+to be consumed by Juvant OS agents (or any MCP-aware client) via `npx`.
+Every tool accepts an optional `shared_user` UPN parameter to operate
+against a delegated / shared mailbox the caller is authorised on; when
+omitted, tools default to the caller's own mailbox (v0.1 semantics).
 
 Conforms to the handbook
 [`mcp-server.md`](https://github.com/juvantlabs/handbook/blob/main/docs/repo-types/mcp-server.md)
@@ -64,11 +67,15 @@ Optional:
    - `User.Read`
    - `Mail.Read`
    - `Mail.ReadWrite`
+   - `Mail.Read.Shared` — v0.2, enables `shared_user` on read tools
+   - `Mail.ReadWrite.Shared` — v0.2, enables `shared_user` on write tools
    - `offline_access`
 
-   Do NOT add `Mail.Send` (Shield-gated for v0.3), `Mail.*.Shared`
-   (v0.2 delegate mailboxes), or any `Files.*` / `Sites.*` / `Calendars.*`
-   scopes (those belong to `m365-graph-mcp-server`).
+   Do NOT add `Mail.Send` (Shield-gated for v0.3), `Mail.Send.Shared`
+   (explicitly beyond v0.3 per
+   [ADR 0001 §D7](docs/adr/0001-v0-3-send-gate-contract.md)), or any
+   `Files.*` / `Sites.*` / `Calendars.*` scopes (those belong to
+   `m365-graph-mcp-server`).
 
 7. **Grant admin consent** if your tenant policy requires it.
 8. **Certificates & secrets** → **New client secret** → copy the secret **Value** immediately (Microsoft only shows it once).
@@ -119,44 +126,82 @@ stderr; stdout is reserved for JSON-RPC framing.
 
 ## Tools
 
-The v0.1 tool surface is **13 tools**, scoped to the caller's own
-mailbox (no shared / delegate mailboxes yet — v0.2). Every tool name
-is `mcp__m365-mail__<tool>` from the harness's point of view, so
-mutating tools are individually targetable by deny-lists (Shield C2).
+The v0.2 tool surface is **13 tools** — the same 13 as v0.1, each
+widened with an optional `shared_user` parameter for shared / delegate
+mailbox access. When `shared_user` is omitted, tools operate on the
+caller's own mailbox (v0.1 semantics, bit-for-bit). When set to a UPN
+(e.g. `finance@juvant.io`), the Graph call routes to
+`/users/{shared_user}/…`. Access is enforced by Exchange — passing a
+UPN the caller has no permission on returns 403 from Graph.
+
+Every tool name is `mcp__m365-mail__<tool>` from the harness's point of
+view, so mutating tools are individually targetable by deny-lists
+(Shield C2).
+
+In the tables below, the paths are shown as `/me/…`; every tool also
+accepts an optional `shared_user` UPN which reroutes the call to
+`/users/{shared_user}/…`. The extra scope column notes the shared
+scope needed when `shared_user` is set.
 
 ### Read
 
-| Tool | Underlying Graph call | Scope required |
-|---|---|---|
-| `list_mail_folders` | `GET /me/mailFolders` | `Mail.Read` |
-| `list_messages` | `GET /me/mailFolders/{f}/messages` or `/me/messages` (ordered `receivedDateTime desc`) | `Mail.Read` |
-| `search_messages` | `GET /me/messages?$search=…` (KQL) | `Mail.Read` |
-| `get_message` | `GET /me/messages/{id}` (full body by default; optional `body_offset` + `max_body_chars` pagination) | `Mail.Read` |
-| `list_attachments` | `GET /me/messages/{id}/attachments` (metadata only) | `Mail.Read` |
-| `download_attachment` | `GET /me/messages/{id}/attachments/{aid}/$value` → local sandbox path | `Mail.Read` |
+| Tool | Underlying Graph call | Scope required | Shared scope |
+|---|---|---|---|
+| `list_mail_folders` | `GET /me/mailFolders` | `Mail.Read` | `Mail.Read.Shared` |
+| `list_messages` | `GET /me/mailFolders/{f}/messages` or `/me/messages` (ordered `receivedDateTime desc`) | `Mail.Read` | `Mail.Read.Shared` |
+| `search_messages` | `GET /me/messages?$search=…` (KQL) | `Mail.Read` | `Mail.Read.Shared` |
+| `get_message` | `GET /me/messages/{id}` (full body by default; optional `body_offset` + `max_body_chars` pagination) | `Mail.Read` | `Mail.Read.Shared` |
+| `list_attachments` | `GET /me/messages/{id}/attachments` (metadata only) | `Mail.Read` | `Mail.Read.Shared` |
+| `download_attachment` | `GET /me/messages/{id}/attachments/{aid}/$value` → local sandbox path | `Mail.Read` | `Mail.Read.Shared` |
 
 ### Write — idempotent
 
-| Tool | Underlying Graph call | Scope required |
-|---|---|---|
-| `create_draft` | `POST /me/messages` (draft; marked with `[agent-draft]` + `X-Juvant-Agent-Author`) | `Mail.ReadWrite` |
-| `update_draft` | `PATCH /me/messages/{id}` (refuses non-drafts) | `Mail.ReadWrite` |
-| `create_reply_draft` | `POST /me/messages/{id}/createReply\|createReplyAll` + `PATCH` (marked subject) | `Mail.ReadWrite` |
-| `create_forward_draft` | `POST /me/messages/{id}/createForward` + `PATCH` (marked subject) | `Mail.ReadWrite` |
-| `mark_read` | `PATCH /me/messages/{id}` `{ isRead }` | `Mail.ReadWrite` |
-| `move_message` | `POST /me/messages/{id}/move` | `Mail.ReadWrite` |
+| Tool | Underlying Graph call | Scope required | Shared scope |
+|---|---|---|---|
+| `create_draft` | `POST /me/messages` (draft; marked with `[agent-draft]` + `X-Juvant-Agent-Author`) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `update_draft` | `PATCH /me/messages/{id}` (refuses non-drafts) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `create_reply_draft` | `POST /me/messages/{id}/createReply\|createReplyAll` + `PATCH` (marked subject) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `create_forward_draft` | `POST /me/messages/{id}/createForward` + `PATCH` (marked subject) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `mark_read` | `PATCH /me/messages/{id}` `{ isRead }` | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `move_message` | `POST /me/messages/{id}/move` | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 
 ### Write — irreversible (two-phase confirmation-token)
 
-| Tool | Underlying Graph call | Scope required |
-|---|---|---|
-| `delete_message` | `DELETE /me/messages/{id}` (→ Deleted Items) | `Mail.ReadWrite` |
+| Tool | Underlying Graph call | Scope required | Shared scope |
+|---|---|---|---|
+| `delete_message` | `DELETE /me/messages/{id}` (→ Deleted Items) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 
 For `delete_message`, the first call returns a preview + a
 `confirmation_token`; the second call (with the token + same args)
 executes the delete. Tokens are single-use, expire in 5 minutes, and
-tied to the exact spec — passing a different `message_id` with
-someone else's token fails with `spec_mismatch`.
+tied to the exact spec — passing a different `message_id` (or a
+different `shared_user`) with someone else's token fails with
+`spec_mismatch`. See
+[ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md) §D6 for the
+spec-hash invariant.
+
+### Shared / delegate mailboxes (v0.2)
+
+Every tool accepts an optional `shared_user` parameter:
+
+- **Shape**: a User Principal Name (UPN) like `finance@juvant.io`.
+  GUID user ids are not accepted; a malformed value raises a loud
+  error rather than silently defaulting to `/me`.
+- **Omitted**: tool operates on the caller's own mailbox (v0.1
+  behaviour).
+- **Set**: Graph call routes to `/users/{shared_user}/…` and requires
+  the corresponding `Mail.Read.Shared` / `Mail.ReadWrite.Shared`
+  delegated scope granted at the app registration.
+- **Access model**: Exchange enforces per-mailbox access. Passing an
+  arbitrary UPN does NOT grant access; it only routes the call, and
+  Graph returns 403 when the caller has no permission on that mailbox.
+- **Shield C4 markers**: still applied on drafts landing in a shared
+  mailbox's Drafts folder.
+- **Shield C3 (untrusted-data)**: still applies. Inbound content from a
+  shared mailbox is untrusted; recipient addresses on drafts MUST be
+  caller-authored, never lifted verbatim.
+- **Non-goal**: `Mail.Send.Shared` (sending *as* another mailbox) is
+  explicitly out per ADR 0001 §D7 — even beyond v0.3.
 
 ### Agent-draft markers (Shield C4)
 
@@ -179,6 +224,15 @@ untrusted data. Tool parameters (recipient addresses, draft bodies)
 must be **explicitly authored by the caller** — never lifted verbatim
 from an inbound message. This provenance boundary is documented at the
 input-schema description level and enforced by policy, not by code.
+
+## Common errors
+
+| Symptom (error / message) | Root cause | Fix |
+| --- | --- | --- |
+| `AADSTS65001` / `interaction_required` from MSAL on the FIRST call after upgrading to a version with wider Graph scopes (v0.1 → v0.2, or any future scope widening) | The cached delegated token still carries the OLD scope set. Silent-refresh cannot mint a token for the newly-requested `Mail.Read.Shared` / `Mail.ReadWrite.Shared` scopes until the user has re-consented under the widened set. | Re-run `npm run setup` to re-consent under the widened scope set. If admin consent is required for the shared scopes on your tenant, ask a Global / Cloud App Admin to grant it in the Entra app registration first, then re-run `npm run setup`. |
+| `403 ErrorAccessDenied` on a `/users/{shared_user}/…` call, `shared_user` correctly shaped | The signed-in user has no Exchange permission on that mailbox (not a "Full Access" delegate, or not a shared-mailbox member). The `shared_user` parameter only routes the call — it does not grant access. | Have the mailbox owner (or an Exchange admin) add the signed-in user as a "Full Access" delegate / shared-mailbox member in Exchange Admin Center. |
+| `shared_user` throws `must be a User Principal Name (UPN)` before any network call | The value is a GUID user id, or is missing an `@`, a domain suffix, or contains whitespace / a second `@`. GUID user ids are explicitly rejected by design (see ADR 0002). | Pass the UPN Graph resolves the user to (e.g. `finance@juvant.io`). Casing does not matter — the server lowercases at the input boundary. |
+| `confirmation_token spec_mismatch` on `delete_message` phase-2 | Phase-2 args do not match phase-1 args on `message_id` and/or `shared_user`. The token is bound to the exact spec, including the mailbox routing key. | Re-run phase 1 (omit `confirmation_token`) with the args you actually intend to execute against. Never carry a token across mailboxes. |
 
 ## Binding
 
@@ -204,8 +258,9 @@ auth model, threat model, performance characteristics, tool catalog).
 
 ## Roadmap
 
-- **v0.2** — shared / delegate mailboxes (`Mail.*.Shared` scopes,
-  `shared_user` tool parameter).
+- **v0.2 — LANDED.** Shared / delegate mailboxes (`Mail.*.Shared`
+  scopes + optional `shared_user` UPN parameter on all 13 tools).
+  See [ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md).
 - **v0.3** — `send_draft` tool, Shield-gated per
   [ADR 0001](docs/adr/0001-v0-3-send-gate-contract.md).
 - **v0.3+** — draft attachment upload.
