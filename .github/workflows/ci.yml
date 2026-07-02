@@ -154,3 +154,54 @@ jobs:
             echo "OK — every write_irreversible tool gates via confirmation_token + consumeConfirmation."
           fi
           exit "$fail"
+
+      - name: v0.3 send-gate invariant (docs/adr/0001-v0-3-send-gate-contract.md D8)
+        run: |
+          set -euo pipefail
+          # v0.1 ships NO send capability. ADR 0001 D8 pins that when
+          # `send_draft` lands in v0.3, it MUST be gated by a
+          # confirmation_token consumed in the same session.
+          #
+          # This check fails the build if any tool under src/tools/
+          # references a Graph send-form endpoint
+          #   /sendMail, /send, /reply, /replyAll, /forward
+          # (the trailing-form endpoints, distinct from createReply /
+          # createReplyAll / createForward which produce drafts) without
+          # ALSO importing consumeConfirmation from the confirmation-
+          # token infra. The v0.1 baseline: zero such references.
+          send_endpoint_pattern='/sendMail|/send["'\'']|/messages/[^/]*/send["'\'']|/reply["'\'']|/replyAll["'\'']|/forward["'\'']'
+          fail=0
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if ! grep -qE 'consumeConfirmation' "$file"; then
+              echo "::error file=$file::Tool references a Graph send-form endpoint but does not import consumeConfirmation. Per ADR 0001 D8, any send path MUST be gated by a consumed confirmation-token from the same session. If this is intentional (post-v0.3), add the consumeConfirmation gate; otherwise revert."
+              fail=1
+            fi
+          done < <(grep -rEln "$send_endpoint_pattern" src/tools/ 2>/dev/null || true)
+          if [ "$fail" -eq 0 ]; then
+            echo "OK — no ungated send-form endpoint references in src/tools/."
+          fi
+          exit "$fail"
+
+      - name: Shield C4 — agent-draft marker invariant
+        run: |
+          set -euo pipefail
+          # Shield C4 requires every draft this server creates to
+          # carry the '[agent-draft] ' subject prefix and/or the
+          # X-Juvant-Agent-Author header. Structural check: the two
+          # load-bearing constants MUST live in src/tools/_shared.ts.
+          # If either is renamed or removed without a successor ADR,
+          # fail the build so it surfaces in code review.
+          fail=0
+          if ! grep -qE 'AGENT_DRAFT_SUBJECT_PREFIX\s*=\s*"\[agent-draft\] "' src/tools/_shared.ts; then
+            echo "::error file=src/tools/_shared.ts::Shield C4 constant AGENT_DRAFT_SUBJECT_PREFIX is missing or has drifted from '[agent-draft] '. Requires a successor ADR."
+            fail=1
+          fi
+          if ! grep -qE 'AGENT_DRAFT_HEADER_NAME\s*=\s*"X-Juvant-Agent-Author"' src/tools/_shared.ts; then
+            echo "::error file=src/tools/_shared.ts::Shield C4 constant AGENT_DRAFT_HEADER_NAME is missing or has drifted from 'X-Juvant-Agent-Author'. Requires a successor ADR."
+            fail=1
+          fi
+          if [ "$fail" -eq 0 ]; then
+            echo "OK — Shield C4 constants present."
+          fi
+          exit "$fail"

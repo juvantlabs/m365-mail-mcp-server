@@ -51,7 +51,9 @@ back-port security fixes to the `N-1` major.
 | Dependency | Version | Why it matters |
 |---|---|---|
 | `@modelcontextprotocol/sdk` | `^1.25.2` | ≥ 1.25.2 required to avoid ReDoS (`GHSA-8r9q-7v3j-jr4g`) and DNS rebinding (`GHSA-w48q-cv73-mx4w`) advisories on earlier versions |
-| _(vendor SDK)_ | | _(fill in as the vendor SDK is selected)_ |
+| `@azure/msal-node` | `^5.0.0` | OAuth token acquisition + refresh. Never roll your own token flow — MSAL is Microsoft's official library and handles revocation/expiry edge cases |
+| `@microsoft/microsoft-graph-client` | `^3.0.7` | Microsoft Graph SDK. Delegated calls scoped to `Mail.Read` + `Mail.ReadWrite` + `User.Read` + `offline_access` only |
+| `@napi-rs/keyring` | `^1.3.0` | Cross-platform OS keychain access for cached refresh tokens. Replaces the archived `keytar` package |
 
 ## Crediting
 
