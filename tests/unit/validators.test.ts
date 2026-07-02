@@ -5,6 +5,7 @@ import {
   validateOptionalBoolean,
   validateOptionalEnum,
   validateOptionalInteger,
+  validateOptionalIntegerOrUndefined,
   validateOptionalString,
   validateRequiredString,
 } from "../../src/types/validators.js";
@@ -62,6 +63,30 @@ describe("validateOptionalInteger", () => {
     expect(() => validateOptionalInteger(11, "n", opts)).toThrow();
     expect(() => validateOptionalInteger(3.5, "n", opts)).toThrow();
     expect(() => validateOptionalInteger("5", "n", opts)).toThrow();
+  });
+});
+
+describe("validateOptionalIntegerOrUndefined", () => {
+  const opts = { min: 1, max: 100 };
+
+  it("returns undefined for undefined / null (no forced default)", () => {
+    expect(validateOptionalIntegerOrUndefined(undefined, "n", opts)).toBeUndefined();
+    expect(validateOptionalIntegerOrUndefined(null, "n", opts)).toBeUndefined();
+  });
+
+  it("returns the integer when in range (incl. boundaries)", () => {
+    expect(validateOptionalIntegerOrUndefined(1, "n", opts)).toBe(1);
+    expect(validateOptionalIntegerOrUndefined(50, "n", opts)).toBe(50);
+    expect(validateOptionalIntegerOrUndefined(100, "n", opts)).toBe(100);
+  });
+
+  it("throws below min / above max / non-integer / non-number", () => {
+    expect(() => validateOptionalIntegerOrUndefined(0, "n", opts)).toThrow(
+      "between 1 and 100",
+    );
+    expect(() => validateOptionalIntegerOrUndefined(101, "n", opts)).toThrow();
+    expect(() => validateOptionalIntegerOrUndefined(3.5, "n", opts)).toThrow();
+    expect(() => validateOptionalIntegerOrUndefined("5", "n", opts)).toThrow();
   });
 });
 

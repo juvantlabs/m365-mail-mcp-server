@@ -131,7 +131,7 @@ mutating tools are individually targetable by deny-lists (Shield C2).
 | `list_mail_folders` | `GET /me/mailFolders` | `Mail.Read` |
 | `list_messages` | `GET /me/mailFolders/{f}/messages` or `/me/messages` (ordered `receivedDateTime desc`) | `Mail.Read` |
 | `search_messages` | `GET /me/messages?$search=…` (KQL) | `Mail.Read` |
-| `get_message` | `GET /me/messages/{id}` (body capped at 16 000 chars) | `Mail.Read` |
+| `get_message` | `GET /me/messages/{id}` (full body by default; optional `body_offset` + `max_body_chars` pagination) | `Mail.Read` |
 | `list_attachments` | `GET /me/messages/{id}/attachments` (metadata only) | `Mail.Read` |
 | `download_attachment` | `GET /me/messages/{id}/attachments/{aid}/$value` → local sandbox path | `Mail.Read` |
 

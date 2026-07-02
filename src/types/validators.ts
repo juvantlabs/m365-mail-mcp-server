@@ -46,6 +46,34 @@ export function validateOptionalInteger(
   return value;
 }
 
+/**
+ * Optional integer with NO forced default. Returns `undefined` when the
+ * caller omits the field (or passes null). Distinct from
+ * `validateOptionalInteger`, which always resolves to a number.
+ *
+ * Use this when the *absence* of a value is a meaningful signal to the
+ * handler — e.g. `get_message.max_body_chars`: omitted = return the full
+ * (untruncated) body, set = paginate.
+ */
+export function validateOptionalIntegerOrUndefined(
+  value: unknown,
+  fieldName: string,
+  options: { min: number; max: number },
+): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < options.min ||
+    value > options.max
+  ) {
+    throw new Error(
+      `'${fieldName}' must be an integer between ${options.min} and ${options.max}`,
+    );
+  }
+  return value;
+}
+
 export function validateOptionalEnum<T extends string>(
   value: unknown,
   fieldName: string,

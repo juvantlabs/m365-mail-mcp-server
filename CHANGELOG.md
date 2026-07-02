@@ -34,8 +34,13 @@ Initial functional release. 13 tools, own-mailbox only, no send.
     `/me/messages`, `receivedDateTime desc`
   - `m365-mail:search_messages` — `GET /me/messages?$search=…` with
     `ConsistencyLevel: eventual`
-  - `m365-mail:get_message` — full body, capped at 16 000 chars, with
-    `body_truncated` flag
+  - `m365-mail:get_message` — full body returned untruncated by default.
+    Optional caller-driven pagination via `body_offset` + `max_body_chars`
+    (mirrors the sibling `m365-graph:get_transcript` offset/max_chars
+    contract); the response includes `next_offset` for the next chunk when
+    the slice does not reach the end. `body_truncated` is retained as a
+    boolean alias for `next_offset !== null` and is NEVER `true` for a
+    paramless call — no silent data loss.
   - `m365-mail:list_attachments` — metadata only
   - `m365-mail:download_attachment` — sandboxed path return (not
     bytes); rejects `itemAttachment` and `referenceAttachment` with
