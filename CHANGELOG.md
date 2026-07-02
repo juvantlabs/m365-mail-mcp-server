@@ -107,6 +107,28 @@ Initial functional release. 13 tools, own-mailbox only, no send.
   tests, no `.skip`.
 - `npm audit --audit-level=moderate` clean.
 
+### Release engineering
+
+- **First-publish token bootstrap.** The publish workflow
+  (`.github/workflows/publish.yml`) was copied from
+  `m365-graph-mcp-server` in its post-migration OIDC-only shape (npm
+  Trusted Publishing, no `NODE_AUTH_TOKEN`). npm's Trusted Publisher
+  UI, however, cannot pre-register a package that does not yet exist
+  on npmjs.com. v0.1.0's publish step therefore temporarily carries a
+  `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` env — a Granular Access
+  Token stored as the repo secret `NPM_TOKEN` — while the rest of the
+  workflow (npm upgrade, `--provenance`, `id-token: write`, the
+  `production` environment approval gate) is unchanged. Provenance
+  attestation still runs via OIDC and is independent of publish auth.
+  Immediately after v0.1.0 is live we register the Trusted Publisher
+  on npmjs.com and land a follow-up PR that deletes the `env` block,
+  reverting to pure OIDC — no other workflow changes. This mirrors
+  the sibling `m365-graph-mcp-server`'s v0.1.0 → v0.1.3 migration
+  (token bootstrap → OIDC attempt → npm-version fix), the difference
+  being that here the migration will be one PR instead of three
+  releases because we already know the `npm install -g npm@latest`
+  step is required.
+
 ### Planned / not implemented
 
 - **v0.2** — shared / delegate mailboxes (`Mail.*.Shared` scopes,

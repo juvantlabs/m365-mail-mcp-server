@@ -58,17 +58,35 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm (Trusted Publishing + provenance)
-        # No NODE_AUTH_TOKEN env. Authentication is via OIDC: npm verifies
-        # the GitHub Actions OIDC token's claims (repo, workflow,
-        # environment) match the trusted publisher registered for this
-        # package on npmjs.com. Configure on first publish:
-        #   1. npm package settings → Trusted Publishers → Add
-        #      Publisher: GitHub Actions
-        #      Org/User:  juvantlabs
-        #      Repo:      <vendor>-mcp-server
-        #      Workflow:  publish.yml
-        #      Env:       production
-        #   2. Push a tag (this workflow fires + waits for production
-        #      environment manual approval before the publish step runs).
+      - name: Publish to npm (token bootstrap + provenance)
+        # TEMPORARY — first-publish bootstrap.
+        #
+        # npm Trusted Publishing (OIDC-based publish auth) CANNOT be
+        # pre-registered for a package that does not yet exist on
+        # npmjs.com — the "Add Trusted Publisher" UI requires the
+        # package to be resolvable first. So v0.1.0's first publish
+        # must authenticate with a Granular Access Token via
+        # NODE_AUTH_TOKEN. Once v0.1.0 is live, we register the
+        # trusted publisher on npmjs.com and PR B removes this env
+        # block, reverting to pure OIDC.
+        #
+        # Note: `--provenance` still works via OIDC independently of
+        # publish auth — `id-token: write` above signs the attestation
+        # regardless of which auth mechanism carries the publish PUT.
+        #
+        # This mirrors the sibling m365-graph-mcp-server's v0.1.0 →
+        # v0.1.3 migration: v0.1.0 shipped with NODE_AUTH_TOKEN;
+        # v0.1.2 attempted the OIDC migration (failed on npm 10);
+        # v0.1.3 landed OIDC + `npm install -g npm@latest` (kept
+        # above so the future PR B is a pure env-block deletion).
+        #
+        # Trusted Publisher config to apply on npmjs.com after
+        # v0.1.0 is live:
+        #   Publisher: GitHub Actions
+        #   Org/User:  juvantlabs
+        #   Repo:      m365-mail-mcp-server
+        #   Workflow:  publish.yml
+        #   Env:       production
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access=public --provenance
