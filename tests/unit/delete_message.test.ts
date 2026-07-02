@@ -312,4 +312,72 @@ describe("deleteMessageTool — v0.2 shared_user routing + spec hash", () => {
     expect(c.apiCalls).toEqual([]);
     expect(c.deleteCalled).toBe(0);
   });
+
+  // ─── v0.2 (FUP-2): UPN case normalization is threaded to the spec ──
+  //
+  // The load-bearing correctness invariant behind lowercasing the UPN
+  // at the input boundary. Phase-1 preview with `Finance@juvant.io`
+  // and phase-2 execute with `finance@juvant.io` (or any other casing)
+  // MUST resolve to the same spec-hash — otherwise the finance workflow
+  // silently double-issues tokens for what a human reads as the same
+  // mailbox.
+  it("phase-1 in mixed case + phase-2 in lowercase produce the SAME spec-hash (token accepted)", async () => {
+    const c = makeClient({ id: "m1", subject: "Invoice" });
+
+    const phase1 = await deleteMessageTool.handler(c.client, {
+      message_id: "m1",
+      shared_user: "Finance@Juvant.Io",
+    });
+    const { confirmation_token } = JSON.parse(
+      (phase1.content[0] as { type: string; text: string }).text,
+    ).preview;
+
+    // Phase 2: caller (or a downstream agent) passes the same UPN in
+    // lowercase — token MUST validate.
+    const phase2 = await deleteMessageTool.handler(c.client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+      confirmation_token,
+    });
+    const parsed = JSON.parse((phase2.content[0] as { type: string; text: string }).text);
+    expect(parsed.deleted.message_id).toBe("m1");
+    // Preview echoes canonical (lowercased) form.
+    expect(parsed.deleted.shared_user).toBe("finance@juvant.io");
+    expect(c.deleteCalled).toBe(1);
+  });
+
+  it("phase-1 in lowercase + phase-2 in mixed case also validate (symmetric)", async () => {
+    const c = makeClient({ id: "m1", subject: "Invoice" });
+
+    const phase1 = await deleteMessageTool.handler(c.client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    const { confirmation_token } = JSON.parse(
+      (phase1.content[0] as { type: string; text: string }).text,
+    ).preview;
+
+    const phase2 = await deleteMessageTool.handler(c.client, {
+      message_id: "m1",
+      shared_user: "FINANCE@JUVANT.IO",
+      confirmation_token,
+    });
+    const parsed = JSON.parse((phase2.content[0] as { type: string; text: string }).text);
+    expect(parsed.deleted.message_id).toBe("m1");
+    expect(parsed.deleted.shared_user).toBe("finance@juvant.io");
+    expect(c.deleteCalled).toBe(1);
+  });
+
+  it("preview echoes the canonical (lowercase) shared_user, not the raw casing supplied", async () => {
+    const c = makeClient({ id: "m1", subject: "x" });
+    const resp = await deleteMessageTool.handler(c.client, {
+      message_id: "m1",
+      shared_user: "Finance@Juvant.Io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.preview.shared_user).toBe("finance@juvant.io");
+    // And routing goes through the lowercase-encoded path too, so the
+    // Graph URL never carries the raw casing.
+    expect(c.apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1");
+  });
 });

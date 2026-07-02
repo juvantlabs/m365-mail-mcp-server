@@ -225,6 +225,15 @@ must be **explicitly authored by the caller** — never lifted verbatim
 from an inbound message. This provenance boundary is documented at the
 input-schema description level and enforced by policy, not by code.
 
+## Common errors
+
+| Symptom (error / message) | Root cause | Fix |
+| --- | --- | --- |
+| `AADSTS65001` / `interaction_required` from MSAL on the FIRST call after upgrading to a version with wider Graph scopes (v0.1 → v0.2, or any future scope widening) | The cached delegated token still carries the OLD scope set. Silent-refresh cannot mint a token for the newly-requested `Mail.Read.Shared` / `Mail.ReadWrite.Shared` scopes until the user has re-consented under the widened set. | Re-run `npm run setup` to re-consent under the widened scope set. If admin consent is required for the shared scopes on your tenant, ask a Global / Cloud App Admin to grant it in the Entra app registration first, then re-run `npm run setup`. |
+| `403 ErrorAccessDenied` on a `/users/{shared_user}/…` call, `shared_user` correctly shaped | The signed-in user has no Exchange permission on that mailbox (not a "Full Access" delegate, or not a shared-mailbox member). The `shared_user` parameter only routes the call — it does not grant access. | Have the mailbox owner (or an Exchange admin) add the signed-in user as a "Full Access" delegate / shared-mailbox member in Exchange Admin Center. |
+| `shared_user` throws `must be a User Principal Name (UPN)` before any network call | The value is a GUID user id, or is missing an `@`, a domain suffix, or contains whitespace / a second `@`. GUID user ids are explicitly rejected by design (see ADR 0002). | Pass the UPN Graph resolves the user to (e.g. `finance@juvant.io`). Casing does not matter — the server lowercases at the input boundary. |
+| `confirmation_token spec_mismatch` on `delete_message` phase-2 | Phase-2 args do not match phase-1 args on `message_id` and/or `shared_user`. The token is bound to the exact spec, including the mailbox routing key. | Re-run phase 1 (omit `confirmation_token`) with the args you actually intend to execute against. Never carry a token across mailboxes. |
+
 ## Binding
 
 The Juvant OS adopter binds this server in `.juvant/config.json`:

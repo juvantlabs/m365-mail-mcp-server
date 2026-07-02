@@ -74,6 +74,39 @@ describe("validateSharedUser", () => {
   it("uses the fieldName argument in error messages (so callers get a specific field)", () => {
     expect(() => validateSharedUser("bad", "custom_field")).toThrow(/'custom_field'/);
   });
+
+  // ─── v0.2 (FUP-2): case normalization at the boundary ──────────────
+  //
+  // UPNs are case-insensitive in Entra / Exchange, but the value flows
+  // into two byte-sensitive client-side hashes (delete_message
+  // confirmation-token spec-hash; download_attachment sandbox path).
+  // Without normalization here, `Finance@juvant.io` and
+  // `finance@juvant.io` would issue non-interchangeable tokens and
+  // write to two separate sandbox files even though they name the same
+  // mailbox. The invariant is: validateSharedUser is the SINGLE point
+  // where the raw value enters the system; every downstream consumer
+  // must see the canonical (lowercase) form.
+  it("lowercases the local-part of the UPN", () => {
+    expect(validateSharedUser("Finance@juvant.io")).toBe("finance@juvant.io");
+  });
+
+  it("lowercases the domain of the UPN", () => {
+    expect(validateSharedUser("finance@JUVANT.IO")).toBe("finance@juvant.io");
+  });
+
+  it("lowercases mixed-case in both parts", () => {
+    expect(validateSharedUser("Finance@Juvant.Io")).toBe("finance@juvant.io");
+  });
+
+  it("trims first, then lowercases (order-independent for shape but pinned here)", () => {
+    expect(validateSharedUser("  Finance@Juvant.Io  ")).toBe("finance@juvant.io");
+  });
+
+  it("mixed-case and lowercase inputs return the SAME value (byte-equal)", () => {
+    const mixed = validateSharedUser("Finance@Juvant.Io");
+    const lower = validateSharedUser("finance@juvant.io");
+    expect(mixed).toBe(lower);
+  });
 });
 
 describe("mailboxRoot", () => {
@@ -100,6 +133,20 @@ describe("mailboxRoot", () => {
     // must never produce `//messages` or `//users//…`.
     expect(mailboxRoot(undefined) + "/messages").toBe("/me/messages");
     expect(mailboxRoot("a@b.c") + "/messages").toBe("/users/a%40b.c/messages");
+  });
+
+  // ─── v0.2 (FUP-2): mailboxRoot passthrough is case-preserving ──────
+  //
+  // Case normalization is `validateSharedUser`'s job — `mailboxRoot`
+  // is a pure formatter and MUST NOT do a second normalization pass.
+  // Every tool calls `mailboxRoot(validateSharedUser(...))` in that
+  // order, and Graph itself is case-insensitive on the URL, so this
+  // just documents the layering: normalize once at the input boundary,
+  // pass through everywhere else.
+  it("is case-preserving (normalization is validateSharedUser's job, not this one)", () => {
+    expect(mailboxRoot("Finance@Juvant.Io")).toBe(
+      "/users/Finance%40Juvant.Io",
+    );
   });
 });
 

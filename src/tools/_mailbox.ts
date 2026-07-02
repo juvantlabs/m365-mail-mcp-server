@@ -49,6 +49,20 @@
  *     message A cannot authorise a delete of shared-mailbox message B.
  *     See `delete_message.ts`.
  *
+ *  7. Case normalization — the UPN is lowercased at the boundary before
+ *     it is threaded downstream. UPNs are semantically case-insensitive
+ *     (Entra / Exchange treat `Finance@juvant.io` and `finance@juvant.io`
+ *     as the same principal), but the value flows into two places that
+ *     ARE case-sensitive on the client side: (a) the `delete_message`
+ *     confirmation-token spec-hash (SHA-256 over canonical JSON), and
+ *     (b) the `download_attachment` sandbox-path hash. Without
+ *     normalization, two callers of the same mailbox with different
+ *     casings would issue tokens that don't match each other and write
+ *     to two separate sandbox files. Normalizing HERE — the single
+ *     boundary — makes every downstream consumer (routing, spec,
+ *     sandbox) see the same value, and pins the invariant that no tool
+ *     reads `args.shared_user` directly after calling this validator.
+ *
  * ────────────────────────────────────────────────────────────────────────
  */
 
@@ -68,13 +82,24 @@ import { validateOptionalString } from "../types/validators.js";
 const UPN_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Validate the optional `shared_user` parameter. Returns the trimmed
- * UPN when supplied, or `undefined` when the caller omits it (or
- * passes null / empty string).
+ * Validate the optional `shared_user` parameter. Returns the trimmed,
+ * lowercased UPN when supplied, or `undefined` when the caller omits
+ * it (or passes null / empty string).
  *
  * The trim is deliberate: some callers copy the UPN out of Outlook's
  * "Full Access" listing which occasionally carries a trailing space.
  * We trim once, on the boundary; downstream helpers see a clean string.
+ *
+ * The lowercase is also deliberate (see design decision 7 at the top
+ * of this file). UPNs are case-insensitive in Entra / Exchange, but
+ * the value is folded into two client-side hashes (delete_message
+ * confirmation-token spec-hash and download_attachment sandbox-path
+ * hash) that ARE byte-sensitive. Normalizing here — the single point
+ * where `shared_user` enters the system — ensures those hashes stay
+ * stable across `Finance@juvant.io` vs `finance@juvant.io`, and pins
+ * the invariant that every downstream consumer (routing, token spec,
+ * sandbox key) sees the same canonical string. No tool re-reads
+ * `args.shared_user` after calling this validator.
  *
  * Throws when supplied but not UPN-shaped — the failure mode is loud
  * because a mistyped UPN silently would let the tool call succeed
@@ -101,7 +126,12 @@ export function validateSharedUser(
         `GUID user ids are not accepted — pass the UPN Graph resolves them to.`,
     );
   }
-  return trimmed;
+  // Case-normalize at the boundary. UPN shape is ASCII-only in
+  // practice (Entra rejects non-ASCII UPN characters), so
+  // `toLowerCase()` — not `toLocaleLowerCase()` — is the right call:
+  // it is locale-independent and produces the same byte sequence on
+  // every host, which the hash-based invariants depend on.
+  return trimmed.toLowerCase();
 }
 
 /**

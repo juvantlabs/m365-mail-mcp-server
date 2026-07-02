@@ -67,6 +67,42 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is replaced with the corresponding "Add `Mail.Read.Shared` /
   `Mail.ReadWrite.Shared`" instruction.
 
+### Follow-ups folded into the v0.2 PR (post deep-review)
+
+- **UPN case normalization at the input boundary** (FUP-2).
+  `validateSharedUser` in `src/tools/_mailbox.ts` now lowercases the
+  UPN after trim + shape validation. UPNs are semantically
+  case-insensitive in Entra / Exchange, but the value flows into two
+  byte-sensitive client-side hashes — the `delete_message`
+  confirmation-token spec-hash (SHA-256 over canonical JSON) and the
+  `download_attachment` sandbox-path hash — where `Finance@juvant.io`
+  and `finance@juvant.io` would otherwise fork into two different
+  tokens and two different sandbox files for what a human reads as the
+  same mailbox. Normalizing at the SINGLE point where `shared_user`
+  enters the system means every downstream consumer (routing, token
+  spec, sandbox key) sees the same canonical value. New unit tests
+  pin: mixed-case → lowercase normalization; cross-case delete-token
+  spec-hash equality (mixed→lower and lower→mixed both validate);
+  cross-case sandbox-path equality; `mailboxRoot` is case-preserving
+  (normalization is the validator's job, not the formatter's).
+- **README "Common errors" table** (FUP-3). Maps four common
+  failure modes to their fixes: MSAL `interaction_required` after a
+  scope widening (fix: re-run `npm run setup`), `403` on a
+  correctly-shaped shared-mailbox call, invalid UPN shape, and
+  `delete_message` `spec_mismatch`. The MSAL row is the load-bearing
+  one for the v0.2 rollout — first-time callers hitting the widened
+  scope set will otherwise loop through a confusing silent-refresh
+  failure without knowing they need to re-consent.
+- **`canonicalize()` upgrade warning** (FUP-4).
+  `src/auth/confirmation_tokens.ts` comment on `canonicalize()`
+  clarifies that the shallow (top-level-only) key sort is intentional
+  and sufficient for the current flat-primitive spec shape used by
+  `delete_message` (`{message_id, shared_user}`), and warns that any
+  future `write_irreversible` tool shipping a nested spec MUST upgrade
+  canonicalization to recurse — sort keys at every level and
+  canonicalize arrays element-wise — before it ships. Docs-only; no
+  behavior change.
+
 ### Security — v0.2 boundaries preserved
 
 - `Mail.Send` and `Mail.Send.Shared` remain out of scope. `Mail.Send`
