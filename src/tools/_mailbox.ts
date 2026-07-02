@@ -63,6 +63,35 @@
  *     sandbox) see the same value, and pins the invariant that no tool
  *     reads `args.shared_user` directly after calling this validator.
  *
+ *  8. Server-side allowlist (v0.2.1, Shield C1 defense-in-depth) —
+ *     `M365_MAIL_ALLOWED_SHARED_USERS` gates every non-empty
+ *     `shared_user` value at the tool boundary, AFTER shape + case
+ *     normalization and BEFORE the Graph URL is composed. This is a
+ *     SECOND, fail-closed enforcement layer on top of Exchange
+ *     delegation: even a UPN that Exchange happens to allow (via a
+ *     "Full Access" grant an operator did not intend to expose to an
+ *     agent) is rejected structurally unless the deployer has listed it.
+ *
+ *     Semantics:
+ *       - env unset / empty / whitespace-only → every `shared_user`
+ *         value is rejected. Own-mailbox `/me` calls (i.e. caller
+ *         omits `shared_user` entirely) are unaffected — the allowlist
+ *         gates ONLY the shared path.
+ *       - env == `*` (the single sentinel value) → any UPN-shaped
+ *         value is accepted. Explicit opt-in for adopters who want
+ *         Exchange as the sole gate (v0.2 behaviour).
+ *       - env == comma-separated UPNs → only exact matches (after the
+ *         same trim + lowercase normalization applied to the caller
+ *         input) are accepted. `Finance@juvant.io` in the env var
+ *         matches a caller `finance@juvant.io` and vice versa.
+ *
+ *     Failure is loud and specific: the error names the env var so
+ *     the operator sees where to fix the policy. The caller never
+ *     gets a silent downgrade to `/me` — that would be a scope surprise
+ *     (an agent asking for shared-mailbox behaviour and getting
+ *     own-mailbox behaviour is exactly the class of confused-deputy
+ *     bug this layer exists to prevent).
+ *
  * ────────────────────────────────────────────────────────────────────────
  */
 
@@ -80,6 +109,53 @@ import { validateOptionalString } from "../types/validators.js";
  * are rejected structurally.
  */
 const UPN_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The `*` sentinel opts an adopter into v0.2's Exchange-only posture
+ * (any UPN accepted, provided it is UPN-shaped). Anything else is a
+ * comma-separated list; each element is trimmed and lowercased before
+ * membership check, so `Finance@juvant.io` in the env var matches a
+ * caller-supplied `finance@juvant.io` and vice versa.
+ */
+const ALLOWED_SHARED_USERS_WILDCARD = "*";
+
+/**
+ * Parse `M365_MAIL_ALLOWED_SHARED_USERS` into a policy verdict for a
+ * caller-supplied, already-normalized UPN.
+ *
+ * Read from `process.env` at every call rather than at module load:
+ *   - tests can mutate the env var per-case without a re-import dance;
+ *   - operators can adjust the allowlist across a long-lived process
+ *     (e.g. an npx-launched server restarted by the harness) with the
+ *     same reload semantics as any other runtime-read env var;
+ *   - the cost is a single map lookup — trivial next to the Graph call
+ *     that follows.
+ *
+ * The env-var name is referenced with the dot-notation
+ * `process.env.M365_MAIL_ALLOWED_SHARED_USERS` so the CI
+ * env-var-accuracy grep in `.github/workflows/ci.yml` picks it up
+ * (that step verifies every env var documented in README.md is
+ * actually read from `process.env.<NAME>` somewhere in `src/`).
+ */
+function isSharedUserAllowed(
+  normalized: string,
+): { ok: true } | { ok: false; reason: "env_unset" | "not_listed" } {
+  const raw = process.env.M365_MAIL_ALLOWED_SHARED_USERS;
+  if (raw === undefined || raw.trim().length === 0) {
+    return { ok: false, reason: "env_unset" };
+  }
+  if (raw.trim() === ALLOWED_SHARED_USERS_WILDCARD) {
+    return { ok: true };
+  }
+  const allowed = raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  if (allowed.includes(normalized)) {
+    return { ok: true };
+  }
+  return { ok: false, reason: "not_listed" };
+}
 
 /**
  * Validate the optional `shared_user` parameter. Returns the trimmed,
@@ -105,6 +181,13 @@ const UPN_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * because a mistyped UPN silently would let the tool call succeed
  * against `/me` (if we treated the parameter as ignored) which is a
  * dangerous silent-scope-change.
+ *
+ * v0.2.1 — ALSO throws when the shape-valid, normalized UPN is not
+ * covered by the server-side `M365_MAIL_ALLOWED_SHARED_USERS`
+ * allowlist. Semantics: unset / empty env → all `shared_user` values
+ * rejected (fail-closed default); `*` → any UPN accepted (v0.2
+ * Exchange-only posture, explicit opt-in); comma-separated UPNs →
+ * exact membership after trim + lowercase. See design decision 8.
  */
 export function validateSharedUser(
   value: unknown,
@@ -131,7 +214,36 @@ export function validateSharedUser(
   // `toLowerCase()` — not `toLocaleLowerCase()` — is the right call:
   // it is locale-independent and produces the same byte sequence on
   // every host, which the hash-based invariants depend on.
-  return trimmed.toLowerCase();
+  const normalized = trimmed.toLowerCase();
+
+  // v0.2.1 — server-side allowlist gate. Applied AFTER shape +
+  // normalization (so the operator's env var and the caller's input
+  // are compared in the same canonical form) and BEFORE any Graph
+  // call (rejection happens at the tool boundary, no network is
+  // ever touched with an unallowed UPN). Fail-closed on unset env,
+  // never silently downgraded to `/me` — see design decision 8 at
+  // the top of this file.
+  const verdict = isSharedUserAllowed(normalized);
+  if (!verdict.ok) {
+    if (verdict.reason === "env_unset") {
+      throw new Error(
+        `'${fieldName}' was supplied (${JSON.stringify(normalized)}) but the ` +
+          `server has no shared-mailbox allowlist configured. Set ` +
+          `M365_MAIL_ALLOWED_SHARED_USERS to a comma-separated list of allowed UPNs ` +
+          `(e.g. 'finance@juvant.io,legal@juvant.io'), or to '*' to accept any ` +
+          `UPN (Exchange-only enforcement, v0.2 posture). Own-mailbox calls ` +
+          `(omit '${fieldName}') are unaffected.`,
+      );
+    }
+    throw new Error(
+      `'${fieldName}' value ${JSON.stringify(normalized)} is not in ` +
+        `M365_MAIL_ALLOWED_SHARED_USERS. The server-side allowlist rejected this UPN ` +
+        `before any Graph call. If this mailbox should be reachable, add it to ` +
+        `M365_MAIL_ALLOWED_SHARED_USERS on the server and restart.`,
+    );
+  }
+
+  return normalized;
 }
 
 /**
@@ -178,8 +290,10 @@ export const SHARED_USER_SCHEMA_PROPERTY = {
       "e.g. 'finance@juvant.io'. When omitted, the tool operates on the caller's own mailbox " +
       "(v0.1 behaviour). Access is enforced by Exchange — passing an arbitrary UPN does NOT " +
       "grant access; it only routes the call, and Graph will return 403 if the caller has no " +
-      "permission on that mailbox. Requires the app to have Mail.Read.Shared / Mail.ReadWrite.Shared " +
-      "delegated scopes granted (v0.2+). Shield C3 still applies: inbound content from a shared " +
-      "mailbox is still untrusted data.",
+      "permission on that mailbox. In v0.2.1 an additional server-side allowlist " +
+      "(M365_MAIL_ALLOWED_SHARED_USERS env var) rejects any UPN not on the deployer-configured " +
+      "list before any Graph call is made — fail-closed if the env var is unset. Requires the " +
+      "app to have Mail.Read.Shared / Mail.ReadWrite.Shared delegated scopes granted (v0.2+). " +
+      "Shield C3 still applies: inbound content from a shared mailbox is still untrusted data.",
   },
 } as const;
