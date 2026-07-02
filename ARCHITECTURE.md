@@ -155,11 +155,14 @@ Per the 2026-07-02 Shield review of the Azure app PR:
   buffering. Metadata GET runs BEFORE the byte fetch; files >200 MB
   are rejected pre-flight. Cap is defense against runaway memory /
   disk on adversarial or misconfigured inputs.
-- **Message body**: capped at 16 000 characters in `get_message`
-  (`body_truncated: true` when hit). Outlook bodies with quoted
-  history + HTML signatures + tracking pixels can bloat well past
-  what an agent needs to reason about; the cap keeps context budgets
-  predictable.
+- **Message body**: `get_message` returns the FULL body by default —
+  no silent truncation. For very long bodies (long threads, HTML with
+  quoted history), callers can opt into pagination by setting
+  `max_body_chars` (and `body_offset` for the continuation offset
+  echoed back as `next_offset`). This mirrors the sibling
+  `m365-graph:get_transcript` offset/max_chars contract. `body_truncated`
+  is retained as a boolean-friendly alias for `next_offset !== null` and
+  is NEVER `true` for a paramless call.
 - **Search**: uses Graph `$search` with the required
   `ConsistencyLevel: eventual` header. Graph forbids
   `$search`+`$orderby`, so results come back relevance-ordered.
@@ -173,7 +176,7 @@ Per the 2026-07-02 Shield review of the Azure app PR:
 | `m365-mail:list_mail_folders` | `GET /me/mailFolders` | `limit?` | `{count, folders[]}` | Top-level only in v0.1 |
 | `m365-mail:list_messages` | `GET /me/mailFolders/{f}/messages` \| `/me/messages` | `folder_id?`, `limit?` | `{folder_id, count, messages[]}` | Ordered `receivedDateTime desc` |
 | `m365-mail:search_messages` | `GET /me/messages?$search=…` | `query`, `folder_id?`, `limit?` | `{query, folder_id, count, messages[]}` | KQL; `ConsistencyLevel: eventual` |
-| `m365-mail:get_message` | `GET /me/messages/{id}` | `message_id` | Full message + capped body | Body cap 16 000 chars |
+| `m365-mail:get_message` | `GET /me/messages/{id}` | `message_id`, `body_offset?`, `max_body_chars?` | Full message + body (full by default; caller-driven slice when `max_body_chars` is set) | Uncapped body by default. Optional pagination: `body_offset` / `max_body_chars`, `next_offset` returned when the slice does not reach the end |
 | `m365-mail:list_attachments` | `GET /me/messages/{id}/attachments` | `message_id`, `limit?` | `{message_id, count, attachments[]}` | Metadata only (no `contentBytes`) |
 | `m365-mail:download_attachment` | `GET /me/messages/{id}/attachments/{aid}/$value` | `message_id`, `attachment_id` | `{local_path, size_bytes, name, …}` | Sandbox pattern; rejects itemAttachment / referenceAttachment; 200 MB cap |
 
