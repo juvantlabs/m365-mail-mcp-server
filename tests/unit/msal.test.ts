@@ -64,14 +64,20 @@ describe("DELEGATED_SCOPES", () => {
 
   it("does NOT request Mail.Send (v0.3, Shield-gated)", () => {
     // Send is a distinct phase (v0.3) gated on human-in-the-loop review.
-    // v0.1 MUST NOT be able to send: no scope, no tool.
+    // v0.2 MUST NOT be able to send: no scope, no tool.
     expect(DELEGATED_SCOPES).not.toContain("Mail.Send");
+    // Mail.Send.Shared is explicitly beyond v0.3 (ADR 0001 §D7) — v0.2
+    // adds .Shared read/write scopes but STOPS at send.
     expect(DELEGATED_SCOPES).not.toContain("Mail.Send.Shared");
   });
 
-  it("does NOT request .Shared variants (v0.2, delegate mailboxes)", () => {
-    expect(DELEGATED_SCOPES).not.toContain("Mail.Read.Shared");
-    expect(DELEGATED_SCOPES).not.toContain("Mail.ReadWrite.Shared");
+  it("v0.2 REQUESTS .Shared read/write variants for delegate mailboxes", () => {
+    // v0.2 adds shared / delegate mailbox support via a `shared_user`
+    // UPN parameter on every tool. Graph enforces per-mailbox access
+    // via Exchange; these scopes only permit ROUTING the call. If this
+    // assertion flips back, `shared_user` will 403 at Graph.
+    expect(DELEGATED_SCOPES).toContain("Mail.Read.Shared");
+    expect(DELEGATED_SCOPES).toContain("Mail.ReadWrite.Shared");
   });
 
   it("does NOT request scopes owned by m365-graph-mcp-server", () => {

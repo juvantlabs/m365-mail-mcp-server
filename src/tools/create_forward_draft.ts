@@ -33,13 +33,18 @@ import {
   buildMessageBody,
   ensureAgentDraftSubject,
 } from "./_shared.js";
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import { validateRequiredString } from "../types/validators.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const definition: ToolDefinition = {
   name: "m365-mail:create_forward_draft",
   description:
-    "Create a forward draft from an existing message. Graph pre-fills quoted history; supply `to` (and optionally `cc` / `bcc`) to address it. Optional `body` prepends a note above the quoted history. Does NOT send. The Shield '[agent-draft] ' subject prefix is applied unconditionally.",
+    "Create a forward draft from an existing message. Graph pre-fills quoted history; supply `to` (and optionally `cc` / `bcc`) to address it. Optional `body` prepends a note above the quoted history. Does NOT send. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to forward a message from a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the forward draft lands in the same mailbox's Drafts folder.",
   inputSchema: {
     type: "object",
     properties: {
@@ -48,6 +53,7 @@ const definition: ToolDefinition = {
         description: "Parent message id to forward.",
       },
       ...DRAFT_BODY_SCHEMA_PROPERTIES,
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -58,9 +64,11 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const draft = (await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}/createForward`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}/createForward`)
     .post({})) as Record<string, unknown>;
 
   const draftId = String(draft.id ?? "");
@@ -77,7 +85,7 @@ const handler: ToolHandler = async (
   }
 
   const finalMessage = (await graph
-    .api(`/me/messages/${encodeURIComponent(draftId)}`)
+    .api(`${root}/messages/${encodeURIComponent(draftId)}`)
     .patch(patch)) as Record<string, unknown>;
 
   const summary = summarizeMessage(finalMessage);
@@ -90,11 +98,14 @@ const handler: ToolHandler = async (
           {
             created: summary,
             parent_message_id: messageId,
+            shared_user: sharedUser ?? null,
             agent_draft_markers: {
               subject_prefix: AGENT_DRAFT_SUBJECT_PREFIX.trimEnd(),
               header: "not applicable — createForward-derived drafts cannot carry internetMessageHeaders",
             },
-            note: "Forward draft saved to Drafts. Not sent.",
+            note: sharedUser
+              ? `Forward draft saved to ${sharedUser}'s Drafts folder. Not sent.`
+              : "Forward draft saved to Drafts. Not sent.",
           },
           null,
           2,

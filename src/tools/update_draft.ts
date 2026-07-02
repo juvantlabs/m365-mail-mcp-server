@@ -31,13 +31,18 @@ import {
   DRAFT_BODY_SCHEMA_PROPERTIES,
   buildMessageBody,
 } from "./_shared.js";
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import { validateRequiredString } from "../types/validators.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const definition: ToolDefinition = {
   name: "m365-mail:update_draft",
   description:
-    "Update an existing draft (subject, body, recipients, importance). Refuses to PATCH a message that is not a draft. WARNING: passing `to` / `cc` / `bcc` REPLACES the entire list — pass the full intended list, not a delta. The '[agent-draft] ' subject marker is re-applied idempotently on any subject update.",
+    "Update an existing draft (subject, body, recipients, importance). Refuses to PATCH a message that is not a draft. WARNING: passing `to` / `cc` / `bcc` REPLACES the entire list — pass the full intended list, not a delta. The '[agent-draft] ' subject marker is re-applied idempotently on any subject update. Pass `shared_user` to update a draft in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); it must match the mailbox the draft lives in.",
   inputSchema: {
     type: "object",
     properties: {
@@ -46,6 +51,7 @@ const definition: ToolDefinition = {
         description: "Draft message id from list_messages / search_messages / create_draft.",
       },
       ...DRAFT_BODY_SCHEMA_PROPERTIES,
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -56,6 +62,10 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
+  const messagePath = `${root}/messages/${encodeURIComponent(messageId)}`;
+
   const patch = buildMessageBody(args, { mode: "patch" });
   if (Object.keys(patch).length === 0) {
     throw new Error(
@@ -66,7 +76,7 @@ const handler: ToolHandler = async (
   // Pre-flight: refuse non-drafts. One extra GET, but it prevents the
   // silent-mutation-of-sent-mail failure mode.
   const current = (await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}`)
+    .api(messagePath)
     .select("id,isDraft,subject")
     .get()) as Record<string, unknown>;
   if (current.isDraft !== true) {
@@ -76,16 +86,18 @@ const handler: ToolHandler = async (
     );
   }
 
-  const updated = await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}`)
-    .patch(patch);
+  const updated = await graph.api(messagePath).patch(patch);
   const summary = summarizeMessage(updated);
 
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ updated: summary }, null, 2),
+        text: JSON.stringify(
+          { updated: summary, shared_user: sharedUser ?? null },
+          null,
+          2,
+        ),
       },
     ],
   };

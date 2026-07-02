@@ -87,4 +87,35 @@ describe("listAttachmentsTool handler", () => {
   it("category is 'read'", () => {
     expect(listAttachmentsTool.category).toBe("read");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes to /users/{upn}/messages/{id}/attachments when shared_user is set", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await listAttachmentsTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1/attachments");
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = captureRequest({ value: [] });
+    const resp = await listAttachmentsTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await expect(
+      listAttachmentsTool.handler(client, {
+        message_id: "m1",
+        shared_user: "bad",
+      }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

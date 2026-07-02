@@ -80,4 +80,41 @@ describe("updateDraftTool handler", () => {
   it("category is 'write_idempotent'", () => {
     expect(updateDraftTool.category).toBe("write_idempotent");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes both the pre-flight GET and the PATCH via /users/{upn}/messages/{id}", async () => {
+    const { apiCalls, client } = makeClient({ currentIsDraft: true });
+    await updateDraftTool.handler(client, {
+      message_id: "m1",
+      subject: "Revised",
+      shared_user: "finance@juvant.io",
+    });
+    // Two api() calls: one for pre-flight GET, one for PATCH — both
+    // MUST hit the shared mailbox path.
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1");
+    expect(apiCalls[1]).toBe("/users/finance%40juvant.io/messages/m1");
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = makeClient({ currentIsDraft: true });
+    const resp = await updateDraftTool.handler(client, {
+      message_id: "m1",
+      subject: "x",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = makeClient({ currentIsDraft: true });
+    await expect(
+      updateDraftTool.handler(client, {
+        message_id: "m1",
+        subject: "x",
+        shared_user: "bad",
+      }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

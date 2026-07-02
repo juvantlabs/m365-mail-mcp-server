@@ -97,6 +97,29 @@ describe("deriveSafeLocalPath", () => {
       expect(p.startsWith(sandbox + "/")).toBe(true);
     }
   });
+
+  // ─── v0.2: shared_user folded into the hash ────────────────────────
+  it("produces a different path when shared_user differs but message_id/attachment_id/name are equal", () => {
+    // Graph message ids are mailbox-scoped in practice, but folding
+    // the mailbox routing key into the hash makes the collision
+    // impossible even in pathological cases. This test pins that
+    // guarantee.
+    const own = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf");
+    const shared = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "finance@juvant.io");
+    expect(own).not.toBe(shared);
+  });
+
+  it("two different shared_users produce two different paths", () => {
+    const a = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "one@juvant.io");
+    const b = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", "two@juvant.io");
+    expect(a).not.toBe(b);
+  });
+
+  it("omitting shared_user is equivalent to explicitly passing undefined (v0.1 back-compat)", () => {
+    const withUndef = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf", undefined);
+    const withoutArg = deriveSafeLocalPath(sandbox, "m", "a", "x.pdf");
+    expect(withUndef).toBe(withoutArg);
+  });
 });
 
 describe("attachmentKind", () => {
@@ -177,5 +200,46 @@ describe("downloadAttachmentTool handler — pre-flight rejection paths", () => 
 
   it("category is 'read'", () => {
     expect(downloadAttachmentTool.category).toBe("read");
+  });
+
+  // ─── v0.2: shared_user rejection paths ─────────────────────────────
+  it("rejects a malformed shared_user before the metadata GET", async () => {
+    const client = mockClient({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      size: 10,
+    });
+    await expect(
+      downloadAttachmentTool.handler(client, {
+        message_id: "m1",
+        attachment_id: "a1",
+        shared_user: "not-a-upn",
+      }),
+    ).rejects.toThrow(/UPN/);
+  });
+});
+
+describe("downloadAttachmentTool handler — shared_user routing", () => {
+  it("routes the metadata GET through /users/{upn}/messages when shared_user is set", async () => {
+    const apiCalls: string[] = [];
+    const get = vi.fn().mockResolvedValue({
+      "@odata.type": "#microsoft.graph.itemAttachment", // reject early to skip the byte fetch
+      size: 10,
+    });
+    const select = vi.fn().mockReturnValue({ get });
+    const api = vi.fn().mockImplementation((path: string) => {
+      apiCalls.push(path);
+      return { select };
+    });
+    const client = { api } as unknown as Client;
+    await expect(
+      downloadAttachmentTool.handler(client, {
+        message_id: "m1",
+        attachment_id: "a1",
+        shared_user: "finance@juvant.io",
+      }),
+    ).rejects.toThrow(/itemAttachment/);
+    expect(apiCalls[0]).toBe(
+      "/users/finance%40juvant.io/messages/m1/attachments/a1",
+    );
   });
 });

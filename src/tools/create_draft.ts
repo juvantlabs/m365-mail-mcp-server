@@ -34,16 +34,22 @@ import {
   DRAFT_BODY_SCHEMA_PROPERTIES,
   buildMessageBody,
 } from "./_shared.js";
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const definition: ToolDefinition = {
   name: "m365-mail:create_draft",
   description:
-    "Create a new draft message in the user's Drafts folder. Does NOT send — the draft sits in Drafts until the user (or a later Shield-gated send_draft tool in v0.3) sends it. Every created draft is marked (subject prefix '[agent-draft] ' + custom header X-Juvant-Agent-Author) so agent-authored drafts are visually distinguishable. Returns the created draft's id + summary. Attachments are not supported in v0.1.",
+    "Create a new draft message in the user's Drafts folder. Does NOT send — the draft sits in Drafts until the user (or a later Shield-gated send_draft tool in v0.3) sends it. Every created draft is marked (subject prefix '[agent-draft] ' + custom header X-Juvant-Agent-Author) so agent-authored drafts are visually distinguishable. Returns the created draft's id + summary. Attachments are not supported. Pass `shared_user` to create the draft in a shared / delegate mailbox's Drafts folder instead of the caller's own (v0.2, requires Mail.ReadWrite.Shared).",
   inputSchema: {
     type: "object",
     properties: {
       ...DRAFT_BODY_SCHEMA_PROPERTIES,
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: [],
   },
@@ -53,13 +59,16 @@ const handler: ToolHandler = async (
   graph: Client,
   args: Record<string, unknown>,
 ): Promise<ToolResponse> => {
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
+
   const body = buildMessageBody(args, {
     mode: "create",
     attachAgentHeader: true,
     createFallbackSubject: "",
   });
 
-  const created = await graph.api("/me/messages").post(body);
+  const created = await graph.api(`${root}/messages`).post(body);
   const summary = summarizeMessage(created);
 
   return {
@@ -69,11 +78,14 @@ const handler: ToolHandler = async (
         text: JSON.stringify(
           {
             created: summary,
+            shared_user: sharedUser ?? null,
             agent_draft_markers: {
               subject_prefix: "[agent-draft] ",
               header: "X-Juvant-Agent-Author",
             },
-            note: "Draft saved to Drafts folder. Not sent. Use update_draft to edit; use delete_message (two-phase) to remove.",
+            note: sharedUser
+              ? `Draft saved to ${sharedUser}'s Drafts folder. Not sent. Use update_draft to edit; use delete_message (two-phase) to remove. Both must be called with the same shared_user.`
+              : "Draft saved to Drafts folder. Not sent. Use update_draft to edit; use delete_message (two-phase) to remove.",
           },
           null,
           2,

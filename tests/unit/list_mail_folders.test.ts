@@ -93,4 +93,35 @@ describe("listMailFoldersTool handler", () => {
   it("category is 'read'", () => {
     expect(listMailFoldersTool.category).toBe("read");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("routes to /users/{upn}/mailFolders when shared_user is set", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await listMailFoldersTool.handler(client, { shared_user: "finance@juvant.io" });
+    expect(apiCalls).toEqual(["/users/finance%40juvant.io/mailFolders"]);
+  });
+
+  it("echoes shared_user in the response (null when omitted)", async () => {
+    const { client } = captureRequest({ value: [] });
+    const own = await listMailFoldersTool.handler(client, {});
+    const ownParsed = JSON.parse((own.content[0] as { type: string; text: string }).text);
+    expect(ownParsed.shared_user).toBeNull();
+
+    const { client: c2 } = captureRequest({ value: [] });
+    const shared = await listMailFoldersTool.handler(c2, {
+      shared_user: "finance@juvant.io",
+    });
+    const sharedParsed = JSON.parse(
+      (shared.content[0] as { type: string; text: string }).text,
+    );
+    expect(sharedParsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest({ value: [] });
+    await expect(
+      listMailFoldersTool.handler(client, { shared_user: "not-a-upn" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

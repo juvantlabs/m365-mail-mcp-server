@@ -11,6 +11,72 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — v0.2 (shared / delegate mailboxes)
+
+- **`shared_user` optional parameter on all 13 tools.** Every tool
+  (read, idempotent-write, and irreversible-write) now accepts an
+  optional `shared_user` UPN parameter (e.g. `finance@juvant.io`).
+  When set, the underlying Graph call routes to `/users/{shared_user}/…`
+  instead of `/me/…`, letting the caller operate on a shared /
+  delegated mailbox they have been granted access to at the Exchange
+  level. Omitted → v0.1 behaviour (bit-for-bit identical to v0.1
+  when the parameter is absent). Composition point:
+  `src/tools/_mailbox.ts::mailboxRoot`. Design record:
+  [ADR 0002](docs/adr/0002-v0-2-shared-mailbox-parameter.md).
+
+- **`Mail.Read.Shared` + `Mail.ReadWrite.Shared` delegated scopes**
+  added to `DELEGATED_SCOPES` in `src/auth/msal.ts`. Requires the app
+  registration to be updated (add the two scopes + admin consent) —
+  this is an eng-platform action, tracked separately in
+  `juvant-shared-infra` Terraform. Until that lands, calls with
+  `shared_user` set will 403 at Graph.
+
+- **`shared_user` folded into `delete_message` confirmation-token spec
+  hash.** The canonical-JSON spec now includes `shared_user` (null
+  for own-mailbox), so a token issued against own-mailbox message A
+  cannot authorise a delete of shared-mailbox message B with the
+  same id. Three new unit tests pin the invariant (own→shared,
+  shared→own, shared A→shared B).
+
+- **`shared_user` folded into `download_attachment` sandbox hash.**
+  `deriveSafeLocalPath` now includes the mailbox routing key
+  (`"me"` or the UPN) in the SHA-256 that derives the local
+  filename. Defense-in-depth against filesystem collisions where the
+  same `message_id`+`attachment_id` pair could belong to different
+  mailboxes.
+
+- **`docs/adr/0002-v0-2-shared-mailbox-parameter.md`** records the
+  six design decisions from [#5](https://github.com/juvantlabs/m365-mail-mcp-server/issues/5):
+  UPN-only parameter shape, delegated-vs-shared distinction not
+  surfaced, single composition point, Shield C4 markers preserved on
+  shared drafts, threat-model boundary unchanged (still Mail-only),
+  and the delete-spec-hash invariant.
+
+### Changed — v0.2
+
+- `tests/unit/registry.test.ts` — invariant flipped from "v0.1 must
+  NOT ship any `shared_user` parameter" to "v0.2 exposes `shared_user`
+  as an optional parameter on every tool". Every tool's schema is
+  now asserted to include the parameter with the shared-scope-aware
+  description (the description constant is
+  `SHARED_USER_SCHEMA_PROPERTY` in `_mailbox.ts`).
+- `README.md` and `ARCHITECTURE.md` — reflect the v0.2 status, the
+  widened Entra scope list, the new `shared_user` parameter on all 13
+  tool tables, and the roadmap line for v0.2 marked landed. The
+  "Do NOT add `Mail.*.Shared`" line in the app-registration steps
+  is replaced with the corresponding "Add `Mail.Read.Shared` /
+  `Mail.ReadWrite.Shared`" instruction.
+
+### Security — v0.2 boundaries preserved
+
+- `Mail.Send` and `Mail.Send.Shared` remain out of scope. `Mail.Send`
+  is a v0.3 concern (Shield-gated per ADR 0001). `Mail.Send.Shared` is
+  explicitly beyond v0.3 per ADR 0001 §D7.
+- Application (app-only) permissions remain out of scope. v0.2 stays
+  delegated-only.
+- `Files.*` / `Sites.*` / `Calendars.*` scopes and their `.Shared`
+  equivalents remain the sibling `m365-graph-mcp-server`'s territory.
+
 ### Release engineering
 
 - **Publish workflow migrated to pure npm Trusted Publishing (OIDC).**
@@ -30,6 +96,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   step (which was the pitfall for m365-graph's v0.1.2) was already
   present in v0.1.0's workflow. Repo secret `NPM_TOKEN` is now
   redundant and can be revoked/deleted independently.
+
+### Prerequisite for full v0.2 rollout
+
+End-to-end verification against a live shared mailbox
+(`finance@juvant.io`) is BLOCKED until eng-platform lands the app
+registration scope change in `juvant-shared-infra`
+(`terraform/shared/agent-appregistrations/m365_mail_mcp.tf` → add
+`Mail.Read.Shared` + `Mail.ReadWrite.Shared` delegated scopes → grant
+admin consent → re-run `npm run setup` to widen the cached token).
+The code in this branch merges "implemented, not yet e2e-verified
+against a live shared mailbox."
 
 ---
 

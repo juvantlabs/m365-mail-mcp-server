@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { ALL_TOOLS, buildHandlerMap } from "../../src/tools/index.js";
 
 describe("ALL_TOOLS registry", () => {
-  it("registers the v0.1 tool set — exactly 13 tools", () => {
+  it("registers the v0.2 tool set — still 13 tools (shared_user added as parameter, not new tools)", () => {
+    // v0.2 does not add new tools — it widens the 13 existing tools with
+    // an optional `shared_user` parameter. If this count changes, either
+    // v0.3's `send_draft` has landed (bump to 14) or something regressed.
     expect(ALL_TOOLS).toHaveLength(13);
   });
 
@@ -47,18 +50,48 @@ describe("ALL_TOOLS registry", () => {
     expect(registered).toEqual(expected);
   });
 
-  it("v0.1 must NOT ship any send / send_draft tool (Shield-gated for v0.3)", () => {
+  it("v0.2 must still NOT ship any send / send_draft tool (Shield-gated for v0.3)", () => {
     for (const t of ALL_TOOLS) {
       expect(t.definition.name).not.toMatch(/send/i);
     }
   });
 
-  it("v0.1 must NOT ship any shared-mailbox tool (delegate mailboxes are v0.2)", () => {
-    // shared_user is the parameter shape the v0.2 tool set will
-    // introduce. It must not appear anywhere in the v0.1 schema.
+  it("v0.2 exposes `shared_user` as an optional parameter on every tool (delegate mailboxes)", () => {
+    // v0.2 widens the 13 tools with an optional `shared_user` UPN
+    // parameter. This flipped from v0.1's assert-absent invariant.
+    // Every tool MUST expose the parameter, and it MUST NOT be
+    // required (own-mailbox behaviour is the default). If a new tool
+    // lands without wiring shared_user through, this test fails —
+    // catching the "silently drops to /me" failure mode.
     for (const t of ALL_TOOLS) {
       const props = t.definition.inputSchema.properties as Record<string, unknown>;
-      expect(Object.keys(props)).not.toContain("shared_user");
+      const requiredList = t.definition.inputSchema.required as string[];
+      expect(
+        Object.keys(props),
+        `${t.definition.name} is missing shared_user in inputSchema.properties`,
+      ).toContain("shared_user");
+      expect(
+        requiredList,
+        `${t.definition.name} incorrectly marks shared_user as required — must remain optional so callers get /me behaviour by default`,
+      ).not.toContain("shared_user");
+    }
+  });
+
+  it("v0.2 `shared_user` property carries the shared-scope description on every tool", () => {
+    // Every tool sources the `shared_user` property from the SAME
+    // schema constant (SHARED_USER_SCHEMA_PROPERTY in _mailbox.ts).
+    // Pin the description string so a fork or copy-paste change to
+    // one tool's schema is caught immediately.
+    for (const t of ALL_TOOLS) {
+      const props = t.definition.inputSchema.properties as Record<
+        string,
+        { type: string; description: string }
+      >;
+      const desc = props.shared_user?.description;
+      expect(desc).toBeDefined();
+      expect(desc).toContain("Mail.Read.Shared");
+      expect(desc).toContain("Mail.ReadWrite.Shared");
+      expect(props.shared_user.type).toBe("string");
     }
   });
 

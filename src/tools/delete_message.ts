@@ -6,8 +6,8 @@
  *
  *   Call 1 (no confirmation_token):
  *     - Tool fetches message metadata for preview.
- *     - Issues a confirmation_token tied to the spec {message_id}
- *       and to this tool name.
+ *     - Issues a confirmation_token tied to the spec
+ *       {message_id, shared_user} and to this tool name.
  *     - Returns the preview + token + expiry hint.
  *
  *   Call 2 (with confirmation_token):
@@ -16,17 +16,30 @@
  *     - DELETEs the message.
  *     - Consumes the token (single-use).
  *
- * The DELETE endpoint (/me/messages/{id}) sends the item to Deleted
- * Items in Outlook — recoverable from the recycle bin (default
- * ~30-day retention). This is the same semantics as clicking Delete
- * in Outlook: not "shift-delete permanent", but not undoable by this
- * server either. Hence the two-phase gate.
+ * The DELETE endpoint (/me/messages/{id} or /users/{u}/messages/{id})
+ * sends the item to Deleted Items in Outlook — recoverable from the
+ * recycle bin (default ~30-day retention). This is the same semantics
+ * as clicking Delete in Outlook: not "shift-delete permanent", but
+ * not undoable by this server either. Hence the two-phase gate.
+ *
+ * v0.2 change: the spec now includes `shared_user`, so a token issued
+ * against own-mailbox message A cannot authorise a delete of a
+ * shared-mailbox message B that happens to share the same id. Graph
+ * message ids are already mailbox-scoped in practice, but folding the
+ * mailbox routing key into the spec makes the guarantee explicit and
+ * survives any future Graph id-format change.
  *
  * Required Graph scope: `Mail.ReadWrite` (delegated).
+ * When `shared_user` is set, also requires `Mail.ReadWrite.Shared`.
  */
 
 import type { Client } from "@microsoft/microsoft-graph-client";
 
+import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
 import {
   consumeConfirmation,
   issueConfirmation,
@@ -39,7 +52,7 @@ const TOOL_NAME = "m365-mail:delete_message";
 const definition: ToolDefinition = {
   name: TOOL_NAME,
   description:
-    "Delete a message (sends it to Deleted Items — recoverable from the Outlook recycle bin, not a hard delete). Two-phase: first call returns a preview + confirmation_token; second call (with the token + same args) executes the delete. Token is single-use, expires in 5 minutes, and tied to the exact spec — passing a different message_id with someone else's token fails.",
+    "Delete a message (sends it to Deleted Items — recoverable from the Outlook recycle bin, not a hard delete). Two-phase: first call returns a preview + confirmation_token; second call (with the token + same args) executes the delete. Token is single-use, expires in 5 minutes, and tied to the exact spec — passing a different message_id (or a different shared_user) with someone else's token fails. Pass `shared_user` to delete a message in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); it MUST match between the phase-1 preview and the phase-2 execute call.",
   inputSchema: {
     type: "object",
     properties: {
@@ -52,6 +65,7 @@ const definition: ToolDefinition = {
         description:
           "Omit on the first call (preview mode). Include the token returned by the preview call to execute the delete.",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -88,6 +102,8 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
   // Optional: token may be absent (phase 1) or present (phase 2). We
   // read it defensively without validateOptionalString because we want
   // to distinguish "omitted" from "empty string" cleanly.
@@ -95,8 +111,16 @@ const handler: ToolHandler = async (
   const confirmationToken =
     typeof rawToken === "string" && rawToken.length > 0 ? rawToken : undefined;
 
-  const apiPath = `/me/messages/${encodeURIComponent(messageId)}`;
-  const spec: Record<string, unknown> = { message_id: messageId };
+  const apiPath = `${root}/messages/${encodeURIComponent(messageId)}`;
+  // Spec MUST include shared_user (v0.2) so a token issued against
+  // own-mailbox message A cannot be replayed against shared-mailbox
+  // message B with the same id. `null` is the sentinel for own-mailbox
+  // — omitting the key would let a phase-1(own) / phase-2(shared) mix
+  // slip through the canonical-JSON hash.
+  const spec: Record<string, unknown> = {
+    message_id: messageId,
+    shared_user: sharedUser ?? null,
+  };
 
   // ---------- Phase 1: preview ----------
   if (!confirmationToken) {
@@ -114,8 +138,9 @@ const handler: ToolHandler = async (
             {
               preview: {
                 item: summary,
+                shared_user: sharedUser ?? null,
                 ...issued,
-                instructions: `Re-call ${TOOL_NAME} with the SAME args (message_id) plus this confirmation_token to execute the delete.`,
+                instructions: `Re-call ${TOOL_NAME} with the SAME args (message_id${sharedUser ? " + shared_user" : ""}) plus this confirmation_token to execute the delete.`,
               },
             },
             null,
@@ -143,8 +168,10 @@ const handler: ToolHandler = async (
         type: "text",
         text: JSON.stringify(
           {
-            deleted: { message_id: messageId },
-            note: "DELETE executed against Graph. The message was moved to Deleted Items and may be recoverable from the user's Outlook recycle bin (default ~30-day retention).",
+            deleted: { message_id: messageId, shared_user: sharedUser ?? null },
+            note: sharedUser
+              ? `DELETE executed against Graph on ${sharedUser}'s mailbox. The message was moved to Deleted Items and may be recoverable from that mailbox's Outlook recycle bin (default ~30-day retention).`
+              : "DELETE executed against Graph. The message was moved to Deleted Items and may be recoverable from the user's Outlook recycle bin (default ~30-day retention).",
           },
           null,
           2,

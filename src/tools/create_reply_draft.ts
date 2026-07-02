@@ -37,6 +37,11 @@ import {
   ensureAgentDraftSubject,
 } from "./_shared.js";
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   validateOptionalBoolean,
   validateRequiredString,
 } from "../types/validators.js";
@@ -45,7 +50,7 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:create_reply_draft",
   description:
-    "Create a reply (or reply-all) draft against an existing message. Graph pre-fills quoted history + To/Cc; supply `body` / `subject` / `to` / `cc` / `bcc` to override. Does NOT send. Set reply_all=true for reply-all. The Shield '[agent-draft] ' subject prefix is applied unconditionally.",
+    "Create a reply (or reply-all) draft against an existing message. Graph pre-fills quoted history + To/Cc; supply `body` / `subject` / `to` / `cc` / `bcc` to override. Does NOT send. Set reply_all=true for reply-all. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to reply to a message in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the reply draft lands in the same mailbox's Drafts folder.",
   inputSchema: {
     type: "object",
     properties: {
@@ -58,6 +63,7 @@ const definition: ToolDefinition = {
         description: "If true, use Graph createReplyAll. Default false (reply to sender only).",
       },
       ...DRAFT_BODY_SCHEMA_PROPERTIES,
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -69,10 +75,12 @@ const handler: ToolHandler = async (
 ): Promise<ToolResponse> => {
   const messageId = validateRequiredString(args.message_id, "message_id");
   const replyAll = validateOptionalBoolean(args.reply_all, "reply_all") ?? false;
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const action = replyAll ? "createReplyAll" : "createReply";
   const draft = (await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}/${action}`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}/${action}`)
     .post({})) as Record<string, unknown>;
 
   const draftId = String(draft.id ?? "");
@@ -94,7 +102,7 @@ const handler: ToolHandler = async (
   }
 
   const finalMessage = (await graph
-    .api(`/me/messages/${encodeURIComponent(draftId)}`)
+    .api(`${root}/messages/${encodeURIComponent(draftId)}`)
     .patch(patch)) as Record<string, unknown>;
 
   const summary = summarizeMessage(finalMessage);
@@ -108,11 +116,14 @@ const handler: ToolHandler = async (
             created: summary,
             parent_message_id: messageId,
             reply_all: replyAll,
+            shared_user: sharedUser ?? null,
             agent_draft_markers: {
               subject_prefix: AGENT_DRAFT_SUBJECT_PREFIX.trimEnd(),
               header: "not applicable — createReply-derived drafts cannot carry internetMessageHeaders",
             },
-            note: "Reply draft saved to Drafts. Not sent.",
+            note: sharedUser
+              ? `Reply draft saved to ${sharedUser}'s Drafts folder. Not sent.`
+              : "Reply draft saved to Drafts. Not sent.",
           },
           null,
           2,

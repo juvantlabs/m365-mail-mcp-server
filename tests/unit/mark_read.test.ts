@@ -65,4 +65,32 @@ describe("markReadTool handler", () => {
   it("category is 'write_idempotent'", () => {
     expect(markReadTool.category).toBe("write_idempotent");
   });
+
+  // ─── v0.2: shared_user routing ─────────────────────────────────────
+  it("PATCHes /users/{upn}/messages/{id} when shared_user is set", async () => {
+    const { apiCalls, client } = captureRequest({ isRead: true });
+    await markReadTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    expect(apiCalls[0]).toBe("/users/finance%40juvant.io/messages/m1");
+  });
+
+  it("echoes shared_user in the response", async () => {
+    const { client } = captureRequest({ isRead: true });
+    const resp = await markReadTool.handler(client, {
+      message_id: "m1",
+      shared_user: "finance@juvant.io",
+    });
+    const parsed = JSON.parse((resp.content[0] as { type: string; text: string }).text);
+    expect(parsed.shared_user).toBe("finance@juvant.io");
+  });
+
+  it("rejects a malformed shared_user before hitting Graph", async () => {
+    const { apiCalls, client } = captureRequest({ isRead: true });
+    await expect(
+      markReadTool.handler(client, { message_id: "m1", shared_user: "bad" }),
+    ).rejects.toThrow(/UPN/);
+    expect(apiCalls).toEqual([]);
+  });
 });

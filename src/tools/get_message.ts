@@ -25,6 +25,11 @@ import type { Client } from "@microsoft/microsoft-graph-client";
 
 import { summarizeMessage } from "./list_messages.js";
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   validateOptionalInteger,
   validateOptionalIntegerOrUndefined,
   validateRequiredString,
@@ -71,6 +76,7 @@ const definition: ToolDefinition = {
           "to the next chunk (or is null when the slice reaches the end). When " +
           "omitted, the full body is returned untruncated.",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -175,14 +181,17 @@ const handler: ToolHandler = async (
     "max_body_chars",
     { min: 1, max: MAX_PAGE_CHARS },
   );
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const message = await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}`)
     .select(SELECT_FIELDS)
     .get();
 
   const expanded = expandMessage(message);
-  const result = applyBodyPagination(expanded, bodyOffset, maxBodyChars);
+  const paginated = applyBodyPagination(expanded, bodyOffset, maxBodyChars);
+  const result = { ...paginated, shared_user: sharedUser ?? null };
 
   return {
     content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

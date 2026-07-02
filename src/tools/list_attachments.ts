@@ -23,6 +23,11 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
 
 import {
+  SHARED_USER_SCHEMA_PROPERTY,
+  mailboxRoot,
+  validateSharedUser,
+} from "./_mailbox.js";
+import {
   validateOptionalInteger,
   validateRequiredString,
 } from "../types/validators.js";
@@ -31,7 +36,7 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:list_attachments",
   description:
-    "List the attachments on a message (metadata only — no content bytes). Use download_attachment to fetch a fileAttachment's bytes to a local sandbox. itemAttachment / referenceAttachment kinds are listed but not downloadable via this server. Read-only.",
+    "List the attachments on a message (metadata only — no content bytes). Use download_attachment to fetch a fileAttachment's bytes to a local sandbox. itemAttachment / referenceAttachment kinds are listed but not downloadable via this server. Read-only. Pass `shared_user` to list attachments on a message in a shared / delegate mailbox (v0.2, requires Mail.Read.Shared).",
   inputSchema: {
     type: "object",
     properties: {
@@ -45,6 +50,7 @@ const definition: ToolDefinition = {
         maximum: 100,
         description: "Maximum attachments to list (default 25).",
       },
+      ...SHARED_USER_SCHEMA_PROPERTY,
     },
     required: ["message_id"],
   },
@@ -84,9 +90,11 @@ const handler: ToolHandler = async (
     max: 100,
     default: 25,
   });
+  const sharedUser = validateSharedUser(args.shared_user);
+  const root = mailboxRoot(sharedUser);
 
   const response = await graph
-    .api(`/me/messages/${encodeURIComponent(messageId)}/attachments`)
+    .api(`${root}/messages/${encodeURIComponent(messageId)}/attachments`)
     .select("id,name,size,contentType,isInline")
     .top(limit)
     .get();
@@ -96,6 +104,7 @@ const handler: ToolHandler = async (
 
   const result = {
     message_id: messageId,
+    shared_user: sharedUser ?? null,
     count: attachments.length,
     attachments,
   };
