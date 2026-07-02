@@ -7,6 +7,12 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     testTimeout: 10_000,
+    // Seed test-only env-var defaults (currently just the v0.2.1
+    // shared-mailbox allowlist wildcard). See tests/setup.ts for the
+    // rationale — production semantics stay fail-closed on unset;
+    // this file is a per-test-run convenience so unrelated tool tests
+    // don't have to know about the policy layer.
+    setupFiles: ['tests/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
