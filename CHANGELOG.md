@@ -11,6 +11,56 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] — dependency security update (npm audit clean)
+
+No tool, schema, scope or behaviour change. Existing keychain token
+caches keep working; re-running `setup` is not required.
+
+### Security — v0.2.2
+
+- **`npm audit --audit-level=moderate` is clean again** (32 → 0:
+  3 critical, 12 high, 17 moderate before). No advisory is ignored and
+  the audit threshold is unchanged.
+- **`@azure/msal-node` `^5.0.0` → `^7.1.2`** (GHSA-xcx6-jx8p-x3h5, high).
+  The v6/v7 breaking changes target `acquireTokenInteractive` on public
+  clients; this server uses a confidential client with a manually hosted
+  authorization-code flow, which upstream documents as unchanged.
+- **`@modelcontextprotocol/sdk` `^1.25.2` → `^1.32.2`** (six SDK
+  advisories, high). Also clears transitive `proxy-addr` (critical),
+  `body-parser`, `fast-uri`, `ip-address`, `zod` (high), `hono`,
+  `@hono/node-server`, `qs` (moderate).
+- **Dev toolchain (not shipped):** `vitest` / `@vitest/coverage-v8`
+  `^3` → `^4.1.12` (critical: `vitest`, `tinypool`; plus `vite`,
+  `postcss`, `nanoid`, `source-map-js`, `js-yaml`, `glob`,
+  `brace-expansion`); `eslint` `^9` → `^10.14.0` and
+  `@typescript-eslint/*` → `^8.72.1`; `tsx` → `^4.23.15`;
+  `overrides.minimatch` `^11.0.1` (no 10.x backport exists for the
+  ESLint chain). vitest 4, not 5: vitest 5 requires Node 22 and this
+  package supports Node 20.
+
+### Changed — v0.2.2
+
+- `setup` builds its authorization-URL and code-exchange requests from
+  shared helpers (`authCodeUrlRequest()` / `authCodeTokenRequest()` in
+  `src/auth/msal.ts`) so the two cannot drift. msal-node ≥ 5.6 validates
+  the ID-token nonce strictly; setup sends none, consistently.
+- `makeMsalClient()` accepts optional test-only overrides (offline
+  authority metadata, network module). Production passes none;
+  credentials, authority and cache plugin are not overridable.
+
+### Tests — v0.2.2
+
+- New `tests/unit/msal_contract.test.ts` runs the real msal-node 7
+  offline: setup URL (`response_mode=query`, no nonce, `.Shared`
+  scopes), code exchange → keychain → silent token after restart,
+  strict-nonce rejection, and keychain caches written by msal-node
+  **5.3.1** and **5.6.0** (`tests/fixtures/msal-legacy-cache/`) served
+  from cache and refreshed with their refresh token. It also checks
+  that the cached token reaches Graph as the bearer for both `/me` and
+  `/users/{shared_user}`.
+- Vitest 4: constructor mocks for `@napi-rs/keyring` `Entry` use
+  `function` implementations.
+
 ## [0.2.1] — server-side shared-mailbox allowlist (Shield C1 defense-in-depth)
 
 ### Added — v0.2.1
