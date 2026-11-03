@@ -16,13 +16,17 @@ import { getTokenStore } from "../../src/auth/keyring.js";
 
 beforeEach(() => {
   entryConstructor.mockReset();
-  entryConstructor.mockImplementation((service: string, account: string) => ({
-    service,
-    account,
-    setPassword: setPasswordMock,
-    getPassword: getPasswordMock,
-    deletePassword: deletePasswordMock,
-  }));
+  // Vitest 4: `new Entry(...)` needs a constructible implementation
+  // (a `function`, not an arrow).
+  entryConstructor.mockImplementation(function (service: string, account: string) {
+    return {
+      service,
+      account,
+      setPassword: setPasswordMock,
+      getPassword: getPasswordMock,
+      deletePassword: deletePasswordMock,
+    };
+  });
   setPasswordMock.mockReset();
   getPasswordMock.mockReset();
   deletePasswordMock.mockReset();

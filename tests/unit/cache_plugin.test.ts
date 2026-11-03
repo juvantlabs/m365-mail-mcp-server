@@ -15,11 +15,15 @@ import { makeCachePlugin } from "../../src/auth/msal.js";
 
 beforeEach(() => {
   entryConstructor.mockReset();
-  entryConstructor.mockImplementation(() => ({
-    setPassword: setPasswordMock,
-    getPassword: getPasswordMock,
-    deletePassword: vi.fn(),
-  }));
+  // Vitest 4: `new Entry(...)` needs a constructible implementation
+  // (a `function`, not an arrow).
+  entryConstructor.mockImplementation(function () {
+    return {
+      setPassword: setPasswordMock,
+      getPassword: getPasswordMock,
+      deletePassword: vi.fn(),
+    };
+  });
   setPasswordMock.mockReset();
   getPasswordMock.mockReset();
 });

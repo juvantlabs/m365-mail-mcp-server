@@ -253,8 +253,8 @@ A baseline (see `tests/unit/permission_surface.test.ts`).
 
 | Dependency | Version | Why |
 |---|---|---|
-| `@modelcontextprotocol/sdk` | `^1.25.2` | MCP framing; ≥ 1.25.2 required (ReDoS + DNS rebinding fixes) |
-| `@azure/msal-node` | `^5.0.0` | OAuth Confidential Client + token cache. Microsoft's official library — never roll your own |
+| `@modelcontextprotocol/sdk` | `^1.32.2` | MCP framing; ≥ 1.32.2 clears the SDK advisories through 1.31.0 (and the transitive `proxy-addr` / `zod` / `hono` ones) |
+| `@azure/msal-node` | `^7.1.2` | OAuth Confidential Client + token cache. Microsoft's official library — never roll your own. ≥ 7.1.2 clears GHSA-xcx6-jx8p-x3h5; the 5.x keychain cache format is read unchanged (`tests/unit/msal_contract.test.ts`) |
 | `@microsoft/microsoft-graph-client` | `^3.0.7` | Graph SDK. Uses `initWithMiddleware` + a custom `AuthenticationProvider` bridging MSAL |
 | `@napi-rs/keyring` | `^1.3.0` | Cross-platform OS keychain; replacement for archived `keytar` |
 | `isomorphic-fetch` | `^3.0.0` | Peer dep of the Graph client. Imported once at module load |
