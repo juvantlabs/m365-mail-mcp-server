@@ -11,6 +11,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — CI
+
+- **Publish workflow pins npm to `^11.5.1` instead of `@latest`.** npm 12
+  requires Node `^22.22.2 || ^24.15.0 || >=26`, so `npm install -g
+  npm@latest` on the Node 20 publish runner fails with `EBADENGINE`.
+  11.5.1 is the minimum for Trusted Publishing (OIDC). CI-only; no
+  package change.
+
 ## [0.2.2] — dependency security update (npm audit clean)
 
 No tool, schema, scope or behaviour change. Existing keychain token

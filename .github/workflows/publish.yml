@@ -37,8 +37,11 @@ jobs:
       # needs npm ≥ 11.5.1. Upgrading explicitly here so this workflow
       # doesn't inherit npm's version from whichever Node LTS is current.
       # See: https://docs.npmjs.com/trusted-publishers
+      # Pinned to the npm 11 line, not @latest: npm 12 dropped Node 20
+      # (engines ^22.22.2 || ^24.15.0 || >=26 → EBADENGINE on this runner).
+      # 11.5.1 is the Trusted Publishing minimum.
       - name: Upgrade npm (Trusted Publishing requires ≥ 11.5.1)
-        run: npm install -g npm@latest
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: npm ci
