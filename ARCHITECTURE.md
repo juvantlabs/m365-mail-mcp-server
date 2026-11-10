@@ -56,12 +56,23 @@ Microsoft 365 Outlook Mail via delegated Microsoft Graph:
 
 ## Authentication
 
-- **Flow**: OAuth 2.0 Authorization Code with a Confidential Client
-  Application (`@azure/msal-node`). The client secret is required.
-- **Setup**: interactive one-time flow via `m365-mail-mcp-server setup`
-  → opens the browser at Microsoft's consent screen → local
-  `http://localhost:3000/auth/callback` catches the code → MSAL
-  exchanges for tokens → tokens persist in the OS keychain.
+- **Client type**: public client (`PublicClientApplication`,
+  `@azure/msal-node`). The server runs on the user's machine with
+  delegated permissions, so it holds no client secret or certificate;
+  a leftover `M365_MAIL_CLIENT_SECRET` is ignored with a one-line
+  stderr warning. Required configuration is the tenant ID and client
+  ID, read from the process environment only.
+- **Setup**: one-time `m365-mail-mcp-server setup` (works from the
+  published package via `npx`).
+  - Default: OAuth 2.0 authorization code + PKCE (S256) via MSAL's
+    `acquireTokenInteractive`. MSAL listens on a free port of
+    `127.0.0.1`, the redirect is `http://localhost:<port>` (Entra
+    "Mobile and desktop applications" platform, redirect
+    `http://localhost`, any port), the code arrives by `form_post` and
+    is redeemed with the PKCE verifier. No nonce is sent.
+  - `setup --device-code`: device code flow for headless machines;
+    requires "Allow public client flows" on the app.
+  - Tokens persist in the OS keychain through the MSAL cache plugin.
 - **Runtime**: subsequent server starts read the cached refresh token
   from the keychain and refresh access tokens silently. MSAL handles
   refresh, revocation detection, and expiry edges.
@@ -151,10 +162,10 @@ Per the 2026-07-02 Shield review of the Azure app PR:
      `internetMessageHeaders` on `PATCH`, so reply/forward flows
      rely on the subject prefix alone.
 
-- **C5 — port-3000 op note**. The OAuth callback listens on port
-  3000, shared with `m365-graph-mcp-server`. Only one interactive
-  setup can run at a time. Documented in `README.md § Local
-  development`.
+- **C5 — port-3000 op note (resolved in v0.3.0)**. Up to v0.2.x the
+  OAuth callback listened on fixed port 3000, shared with
+  `m365-graph-mcp-server`. Since v0.3.0 `setup` uses a free port
+  chosen at run time, so both setups can run at once.
 
 ### Anti-patterns actively defended against
 

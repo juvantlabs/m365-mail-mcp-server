@@ -11,6 +11,62 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — public-client auth: no client secret
+
+The server runs on the user's machine with delegated permissions, so it
+is now an OAuth public client. No tool, schema or scope change.
+
+### Changed — auth (breaking for the Entra app setup)
+
+- **`PublicClientApplication` replaces `ConfidentialClientApplication`.**
+  No client secret anywhere: not in code, configuration, or the app
+  registration. Required environment: `M365_MAIL_TENANT_ID` and
+  `M365_MAIL_CLIENT_ID` only.
+- **`setup` uses authorization code + PKCE on a loopback redirect**
+  (MSAL Node `acquireTokenInteractive`): a free port on `127.0.0.1`,
+  redirect `http://localhost:<port>`. The fixed port 3000 and the
+  `/auth/callback` path are gone, so this server's and the sibling
+  m365-graph server's setups can run at the same time.
+- **`setup --device-code`**: device code fallback for machines without
+  a browser (needs "Allow public client flows" on the app).
+- **`setup` works from the published package** (`npx -y
+  @juvantlabs/m365-mail-mcp-server setup`) and reads only process
+  environment variables. `.env.local` remains an optional convenience
+  for `npm run setup` / `npm run dev` in a checkout.
+- **A leftover `M365_MAIL_CLIENT_SECRET` is ignored**, with a one-line
+  deprecation warning on stderr. Its value is never read into MSAL or
+  printed.
+- **Silent-acquisition failures now carry a re-run-`setup` hint**
+  (e.g. a refresh token cached by v0.2.x that the public client cannot
+  redeem).
+- The browser is opened with `execFile` (URL passed as an argument, no
+  shell); the authorization URL is always printed on stderr as well.
+- Unchanged: the delegated scope set, the keychain service name and
+  per-tenant account key, silent refresh behaviour.
+
+### Migration
+
+See README § Migrating from v0.2.x: add the "Mobile and desktop
+applications" platform with redirect `http://localhost`, remove the
+old Web redirect, delete the client secret, drop
+`M365_MAIL_CLIENT_SECRET` from your MCP client configuration, run
+`setup` once.
+
+### Note on numbering
+
+ADR 0001 describes the Shield-gated send phase as "v0.3". Send is not
+part of 0.3.0; it ships in a later version under the same contract.
+
+### Tests
+
+- Contract tests against the real `@azure/msal-node` drive the full
+  loopback flow (authorization URL with PKCE S256, `form_post`, no
+  nonce; code redeemed with the verifier and no `client_secret`), the
+  device-code flow, error delivery to the loopback, and refresh of a
+  legacy cache without a secret.
+- New `tests/unit/setup.test.ts` (argument parsing, flow selection,
+  browser command without a shell, stdout discipline).
+
 ### Fixed — CI
 
 - **Publish workflow pins npm to `^11.5.1` instead of `@latest`.** npm 12
