@@ -274,7 +274,6 @@ A baseline (see `tests/unit/permission_surface.test.ts`).
 
 - [Handbook MCP server spec](https://github.com/juvantlabs/handbook/blob/main/docs/repo-types/mcp-server.md)
 - [Handbook MCP abstract roles ADR 0002](https://github.com/juvantlabs/handbook/blob/main/docs/adr/0002-mcp-abstract-roles.md)
-- [Juvant OS MCP_INVENTORY.md](https://github.com/juvantlabs/juvant-os/blob/main/docs/MCP_INVENTORY.md)
 - [Handbook ADR 0004 — agent action guardrails](https://github.com/juvantlabs/handbook/blob/main/docs/adr/0004-agent-action-guardrails.md)
 - [Sibling reference: `juvantlabs/m365-graph-mcp-server`](https://github.com/juvantlabs/m365-graph-mcp-server)
 - [In-repo `docs/adr/0001-v0-3-send-gate-contract.md`](docs/adr/0001-v0-3-send-gate-contract.md)

@@ -332,9 +332,6 @@ The Juvant OS adopter binds this server in `.juvant/config.json`:
 }
 ```
 
-See [handbook MCP_INVENTORY.md](https://github.com/juvantlabs/juvant-os/blob/main/docs/MCP_INVENTORY.md)
-for the abstract role this server fulfills + the canonical config shape.
-
 ## Architecture
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for design rationale (scope,
