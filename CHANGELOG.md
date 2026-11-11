@@ -11,6 +11,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] — documentation only
+
+No code, tool, schema or scope change.
+
+### Changed — docs
+
+- README and ARCHITECTURE no longer link `docs/MCP_INVENTORY.md` in
+  juvantlabs/juvant-os, which is going away. Published so the README on
+  npm matches the repository.
+- Version pins in the README updated to `0.3.1`.
+
 ## [0.3.0] — public-client auth: no client secret
 
 The server runs on the user's machine with delegated permissions, so it
