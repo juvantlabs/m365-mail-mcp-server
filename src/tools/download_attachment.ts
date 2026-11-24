@@ -37,6 +37,8 @@
  *     structurally prevented.
  *   - 0o700 dir mode + 0o600 file mode.
  *   - Resolved path verified to start with the sandbox root.
+ *   - Copies are deleted after M365_MAIL_DOWNLOAD_TTL_HOURS, and
+ *     M365_MAIL_DOWNLOAD_MODE=return writes none (see _downloads.ts).
  *
  * Size cap: 200 MB. The metadata GET runs BEFORE the byte fetch so
  * the tool refuses large downloads without streaming them.
@@ -46,7 +48,7 @@
  */
 
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -64,6 +66,13 @@ import {
   sanitizeFilename,
   validateRequiredString,
 } from "../types/validators.js";
+import {
+  getDownloadMode,
+  readInline,
+  RETURN_MAX_BYTES,
+  sweepDownloads,
+  tooLargeToReturn,
+} from "./_downloads.js";
 import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/tool.js";
 
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
@@ -73,7 +82,7 @@ const SANDBOX_FILE_MODE = 0o600;
 const definition: ToolDefinition = {
   name: "m365-mail:download_attachment",
   description:
-    "Download a fileAttachment's bytes to a local sandbox directory. Returns the local path, not the file content — agents read the file via a filesystem-aware tool. Size capped at 200 MB. Rejects itemAttachment / referenceAttachment kinds with an explicit error. Read-only on the cloud side. Pass `shared_user` to download an attachment from a message in a shared / delegate mailbox (v0.2, requires Mail.Read.Shared).",
+    "Download a fileAttachment's bytes to a local sandbox directory. Returns the local path, not the file content — agents read the file via a filesystem-aware tool. Local copies are deleted after a retention period (default 24 hours): copy elsewhere what must be kept. If the server runs with M365_MAIL_DOWNLOAD_MODE=return, nothing is written and the content (max 2 MiB) is in the response instead. Size capped at 200 MB. Rejects itemAttachment / referenceAttachment kinds with an explicit error. Read-only on the cloud side. Pass `shared_user` to download an attachment from a message in a shared / delegate mailbox (v0.2, requires Mail.Read.Shared).",
   inputSchema: {
     type: "object",
     properties: {
@@ -155,6 +164,7 @@ const handler: ToolHandler = async (
   graph: Client,
   args: Record<string, unknown>,
 ): Promise<ToolResponse> => {
+  const inline = getDownloadMode() === "return";
   const messageId = validateRequiredString(args.message_id, "message_id");
   const attachmentId = validateRequiredString(args.attachment_id, "attachment_id");
   const sharedUser = validateSharedUser(args.shared_user);
@@ -188,6 +198,29 @@ const handler: ToolHandler = async (
     );
   }
 
+  if (inline) {
+    if (size > RETURN_MAX_BYTES) throw new Error(tooLargeToReturn());
+    const source = (await graph
+      .api(`${metaPath}/$value`)
+      .getStream()) as unknown as NodeJS.ReadableStream;
+    const contentType = String(meta.contentType ?? "");
+    const content = await readInline(
+      Readable.from(source) as AsyncIterable<Uint8Array>,
+      contentType,
+    );
+    const inlineResult = {
+      message_id: messageId,
+      attachment_id: attachmentId,
+      shared_user: sharedUser ?? null,
+      local_path: null,
+      name: String(meta.name ?? ""),
+      content_type: contentType,
+      attachment_type: kind,
+      ...content,
+    };
+    return { content: [{ type: "text", text: JSON.stringify(inlineResult, null, 2) }] };
+  }
+
   const tenantId = process.env.M365_MAIL_TENANT_ID ?? "unknown";
   const sandboxRoot = getSandboxRoot(tenantId);
   await mkdir(sandboxRoot, { recursive: true, mode: SANDBOX_DIR_MODE });
@@ -207,7 +240,14 @@ const handler: ToolHandler = async (
     .getStream()) as unknown as NodeJS.ReadableStream;
 
   const out = createWriteStream(localPath, { mode: SANDBOX_FILE_MODE });
-  await pipeline(Readable.from(stream), out);
+  try {
+    await pipeline(Readable.from(stream), out);
+  } catch (err) {
+    // No partial artifact left in the sandbox.
+    await rm(localPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
+  await sweepDownloads(sandboxRoot);
 
   const result = {
     message_id: messageId,
