@@ -34,14 +34,14 @@ then point your MCP client at the npm package:
 ```bash
 # 1. One-time sign-in: opens the browser, caches tokens in the OS keychain
 M365_MAIL_TENANT_ID=<tenant-id> M365_MAIL_CLIENT_ID=<client-id> \
-  npx -y @juvantlabs/m365-mail-mcp-server@0.3.1 setup
+  npx -y @juvantlabs/m365-mail-mcp-server@0.4.0 setup
 
 # 2. Register the server with Claude Code (or any MCP client)
 claude mcp add m365-mail -s local \
   -e M365_MAIL_TENANT_ID=<tenant-id> \
   -e M365_MAIL_CLIENT_ID=<client-id> \
   -e M365_MAIL_ALLOWED_SHARED_USERS=shared-mailbox@example.com \
-  -- npx -y @juvantlabs/m365-mail-mcp-server@0.3.1
+  -- npx -y @juvantlabs/m365-mail-mcp-server@0.4.0
 ```
 
 The server is a **public client**: it holds no client secret. The tenant
@@ -72,6 +72,8 @@ Optional:
 |---|---|
 | `M365_MAIL_ALLOWED_SHARED_USERS` | **v0.2.1 — server-side shared-mailbox allowlist.** Comma-separated list of UPNs a caller is permitted to pass as `shared_user` (e.g. `finance@juvant.io,legal@juvant.io`). Case-insensitive. `*` (single value) restores v0.2 behaviour (any UPN accepted; Exchange is the sole gate). **Unset or empty → fail-closed: every non-empty `shared_user` value is rejected before any Graph call.** Own-mailbox calls (omit `shared_user`) are unaffected. See `§ Shared / delegate mailboxes`. |
 | `M365_MAIL_DOWNLOAD_DIR` | Root for the attachment download sandbox. Default: `$XDG_CACHE_HOME/m365-mail-mcp-server` or `~/.cache/m365-mail-mcp-server`. |
+| `M365_MAIL_DOWNLOAD_TTL_HOURS` | How long downloaded copies stay on disk, in hours: 1–720, default 24. Older copies are deleted at startup, hourly while the server runs, and after each download. |
+| `M365_MAIL_DOWNLOAD_MODE` | `file` (default) writes the download to the sandbox. `return` writes nothing and returns the content in the response (text, or base64), up to 2 MiB. Any other value stops the server. |
 | `XDG_CACHE_HOME` | Standard XDG cache root; used only as a fallback for the sandbox. |
 | `MCP_SERVER_LOG_LEVEL` | Log level for diagnostics on stderr (default `info`). |
 
@@ -79,6 +81,12 @@ Optional:
 > actually read from `process.env.<NAME>` somewhere in `src/` —
 > placeholder names containing `<>` are skipped. Documenting an env
 > var without wiring it up will fail the build.
+
+## Downloaded files on this machine
+
+`download_attachment` writes a plaintext copy under the sandbox folder (`M365_MAIL_DOWNLOAD_DIR`), readable only by your user, and returns its path. The server deletes its own copies after `M365_MAIL_DOWNLOAD_TTL_HOURS` (default 24 hours): **move what you want to keep elsewhere.** Only files it named itself, inside tenant folders, are ever deleted; symlinks are not followed.
+
+It cleans up only while it runs: if it isn't started again, copies stay. With `M365_MAIL_DOWNLOAD_MODE=return` nothing is written by the server, but the content goes into the MCP client's conversation, which may keep it.
 
 ## Setup
 
@@ -113,7 +121,7 @@ Optional:
 ```bash
 export M365_MAIL_TENANT_ID=<tenant-id>
 export M365_MAIL_CLIENT_ID=<client-id>
-npx -y @juvantlabs/m365-mail-mcp-server@0.3.1 setup
+npx -y @juvantlabs/m365-mail-mcp-server@0.4.0 setup
 ```
 
 `setup` uses the OAuth 2.0 authorization code flow with PKCE: MSAL
@@ -130,7 +138,7 @@ On a machine without a browser, use the device code flow (requires
 **Allow public client flows** = Yes on the app):
 
 ```bash
-npx -y @juvantlabs/m365-mail-mcp-server@0.3.1 setup --device-code
+npx -y @juvantlabs/m365-mail-mcp-server@0.4.0 setup --device-code
 ```
 
 It prints a code to enter at `https://microsoft.com/devicelogin` from
@@ -148,10 +156,10 @@ claude mcp add m365-mail -s local \
   -e M365_MAIL_TENANT_ID=<tenant-id> \
   -e M365_MAIL_CLIENT_ID=<client-id> \
   -e M365_MAIL_ALLOWED_SHARED_USERS=shared-mailbox@example.com \
-  -- npx -y @juvantlabs/m365-mail-mcp-server@0.3.1
+  -- npx -y @juvantlabs/m365-mail-mcp-server@0.4.0
 ```
 
-Other MCP clients: run `npx -y @juvantlabs/m365-mail-mcp-server@0.3.1`
+Other MCP clients: run `npx -y @juvantlabs/m365-mail-mcp-server@0.4.0`
 over stdio with the same environment variables. All diagnostic output
 goes to stderr; stdout is reserved for JSON-RPC framing.
 
@@ -170,11 +178,11 @@ secret. On your existing app registration:
 5. Remove `M365_MAIL_CLIENT_SECRET` from your MCP client configuration
    and any `.env.local` (if it is still set, the server ignores it and
    prints a one-line warning on stderr).
-6. Sign in again: `npx -y @juvantlabs/m365-mail-mcp-server@0.3.1 setup`.
+6. Sign in again: `npx -y @juvantlabs/m365-mail-mcp-server@0.4.0 setup`.
    A refresh token cached by v0.2.x was issued to a confidential client
    and may not be redeemable without the secret; signing in again
    replaces it in the same keychain entry.
-7. Update the version pin in your MCP client configuration to `0.3.1` (or later).
+7. Update the version pin in your MCP client configuration to `0.4.0` (or later).
 
 ### Local development
 
@@ -311,7 +319,7 @@ input-schema description level and enforced by policy, not by code.
 | Symptom (error / message) | Root cause | Fix |
 | --- | --- | --- |
 | `AADSTS65001` / `interaction_required` from MSAL on the FIRST call after upgrading to a version with wider Graph scopes (v0.1 → v0.2, or any future scope widening) | The cached delegated token still carries the OLD scope set. Silent-refresh cannot mint a token for the newly-requested `Mail.Read.Shared` / `Mail.ReadWrite.Shared` scopes until the user has re-consented under the widened set. | Re-run `setup` to re-consent under the widened scope set. If admin consent is required for the shared scopes on your tenant, ask a Global / Cloud App Admin to grant it in the Entra app registration first, then re-run `setup`. |
-| `Silent token acquisition failed: … AADSTS7000218 …` (or another `invalid_grant`) after upgrading to v0.3.0 | The keychain still holds a refresh token issued to the v0.2.x confidential client, which the public client cannot redeem without a secret; or the refresh token expired / was revoked. | Run `npx -y @juvantlabs/m365-mail-mcp-server@0.3.1 setup` once (see § Migrating from v0.2.x). |
+| `Silent token acquisition failed: … AADSTS7000218 …` (or another `invalid_grant`) after upgrading to v0.3.0 | The keychain still holds a refresh token issued to the v0.2.x confidential client, which the public client cannot redeem without a secret; or the refresh token expired / was revoked. | Run `npx -y @juvantlabs/m365-mail-mcp-server@0.4.0 setup` once (see § Migrating from v0.2.x). |
 | `AADSTS7000218: The request body must contain … client_assertion or client_secret` during `setup` | The app registration still treats the redirect as a confidential (Web) client. | Add the **Mobile and desktop applications** platform with redirect `http://localhost` (§ 1 step 4); for `--device-code`, also set **Allow public client flows** = Yes. |
 | `403 ErrorAccessDenied` on a `/users/{shared_user}/…` call, `shared_user` correctly shaped | The signed-in user has no Exchange permission on that mailbox (not a "Full Access" delegate, or not a shared-mailbox member). The `shared_user` parameter only routes the call — it does not grant access. | Have the mailbox owner (or an Exchange admin) add the signed-in user as a "Full Access" delegate / shared-mailbox member in Exchange Admin Center. |
 | `shared_user` throws `must be a User Principal Name (UPN)` before any network call | The value is a GUID user id, or is missing an `@`, a domain suffix, or contains whitespace / a second `@`. GUID user ids are explicitly rejected by design (see ADR 0002). | Pass the UPN Graph resolves the user to (e.g. `finance@juvant.io`). Casing does not matter — the server lowercases at the input boundary. |
@@ -326,7 +334,7 @@ The Juvant OS adopter binds this server in `.juvant/config.json`:
 {
   "mail_reader": {
     "provider": "m365-mail",
-    "mcp_server": "npx -y @juvantlabs/m365-mail-mcp-server@0.3.1",
+    "mcp_server": "npx -y @juvantlabs/m365-mail-mcp-server@0.4.0",
     "scope": "rw"
   }
 }
