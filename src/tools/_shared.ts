@@ -31,6 +31,8 @@
  * ────────────────────────────────────────────────────────────────────────
  */
 
+import type { Client } from "@microsoft/microsoft-graph-client";
+
 import {
   validateOptionalEnum,
   validateOptionalString,
@@ -254,3 +256,123 @@ export const DRAFT_BODY_SCHEMA_PROPERTIES = {
     description: "Message importance. Default: 'normal'.",
   },
 } as const;
+
+// ─── Reply / forward bodies ─────────────────────────────────────────────
+
+export interface MessageBody {
+  contentType: BodyContentType;
+  content: string;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Plain text → HTML fragment: escaped, line breaks kept as `<br>`. */
+function textToHtml(text: string): string {
+  return escapeHtml(text).replace(/\r\n|\r|\n/g, "<br>");
+}
+
+/**
+ * Read a Graph `itemBody` ({contentType, content}) off a message
+ * resource. Graph returns contentType as "html" / "text" (sometimes
+ * capitalized); anything unrecognized or missing yields undefined.
+ */
+export function readMessageBody(message: Record<string, unknown>): MessageBody | undefined {
+  const raw = message.body;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { contentType, content } = raw as Record<string, unknown>;
+  if (typeof content !== "string") return undefined;
+  const type = String(contentType ?? "").toLowerCase();
+  if (type !== "html" && type !== "text") return undefined;
+  return { contentType: type, content };
+}
+
+/**
+ * Put the caller's text above the body Graph prepared for a
+ * reply / reply-all / forward draft, the way Outlook does.
+ *
+ * createReply / createReplyAll / createForward return a draft whose
+ * body already holds the quoted (or forwarded) original message. A
+ * plain PATCH of `body` would replace it, so the draft would lose the
+ * thread. This merges instead:
+ *
+ *   - prepared HTML: the caller's text (escaped and line-broken if it
+ *     is plain text, verbatim if it is HTML) goes right after the
+ *     opening `<body>` tag, or at the very top if there is none;
+ *   - prepared text + caller text: caller text, a blank line, then the
+ *     prepared text;
+ *   - prepared text + caller HTML: the result is HTML, with the
+ *     prepared text escaped below the caller's HTML.
+ *
+ * If there is no prepared content, the caller's body is returned as is.
+ */
+export function prependToPreparedBody(
+  callerBody: MessageBody,
+  prepared: MessageBody | undefined,
+): MessageBody {
+  if (!prepared || prepared.content.trim() === "") return callerBody;
+
+  if (prepared.contentType === "text" && callerBody.contentType === "text") {
+    return {
+      contentType: "text",
+      content: `${callerBody.content}\r\n\r\n${prepared.content}`,
+    };
+  }
+
+  const callerHtml =
+    callerBody.contentType === "html"
+      ? callerBody.content
+      : `<div>${textToHtml(callerBody.content)}</div>`;
+  const block = `${callerHtml}<br>`;
+
+  if (prepared.contentType === "text") {
+    return {
+      contentType: "html",
+      content: `${block}<div>${textToHtml(prepared.content)}</div>`,
+    };
+  }
+
+  const bodyTag = /<body\b[^>]*>/i.exec(prepared.content);
+  if (!bodyTag) {
+    return { contentType: "html", content: `${block}${prepared.content}` };
+  }
+  const at = bodyTag.index + bodyTag[0].length;
+  return {
+    contentType: "html",
+    content: `${prepared.content.slice(0, at)}${block}${prepared.content.slice(at)}`,
+  };
+}
+
+/**
+ * For reply / forward drafts: if the caller's PATCH carries a `body`,
+ * rewrite it so the caller's text sits above the quoted original that
+ * Graph prepared (see prependToPreparedBody). The prepared body is
+ * taken from the createReply / createForward response; if Graph left
+ * it out, it is read back from the draft. Without a caller body the
+ * patch is left untouched, so Graph's prepared body stays as is.
+ */
+export async function keepPreparedBodyBelow(
+  graph: Client,
+  draftPath: string,
+  draft: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const callerBody = patch.body as MessageBody | undefined;
+  if (callerBody === undefined) return;
+
+  let prepared = readMessageBody(draft);
+  if (prepared === undefined) {
+    const fetched = (await graph
+      .api(draftPath)
+      .select("body")
+      .get()) as Record<string, unknown>;
+    prepared = readMessageBody(fetched);
+  }
+  patch.body = prependToPreparedBody(callerBody, prepared);
+}
