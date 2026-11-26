@@ -10,6 +10,10 @@
  *      Shield C4 `[agent-draft] ` marker to Graph's pre-filled
  *      `FW: <subject>`.
  *
+ * `body` does not replace the prepared body: the caller's note is put
+ * above the forwarded message (see prependToPreparedBody in
+ * _shared.ts), as Outlook does.
+ *
  * Required Graph scope: `Mail.ReadWrite` (delegated).
  *
  * Unlike reply, forward has no pre-filled To — the caller should
@@ -32,6 +36,7 @@ import {
   DRAFT_BODY_SCHEMA_PROPERTIES,
   buildMessageBody,
   ensureAgentDraftSubject,
+  keepPreparedBodyBelow,
 } from "./_shared.js";
 import {
   SHARED_USER_SCHEMA_PROPERTY,
@@ -44,7 +49,7 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:create_forward_draft",
   description:
-    "Create a forward draft from an existing message. Graph pre-fills quoted history; supply `to` (and optionally `cc` / `bcc`) to address it. Optional `body` prepends a note above the quoted history. Does NOT send. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to forward a message from a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the forward draft lands in the same mailbox's Drafts folder.",
+    "Create a forward draft from an existing message. Graph pre-fills quoted history; supply `to` (and optionally `cc` / `bcc`) to address it. Optional `body` is placed as a note above the forwarded message, which is kept. Does NOT send. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to forward a message from a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the forward draft lands in the same mailbox's Drafts folder.",
   inputSchema: {
     type: "object",
     properties: {
@@ -84,8 +89,13 @@ const handler: ToolHandler = async (
     patch.subject = ensureAgentDraftSubject(currentSubject);
   }
 
+  // Graph's prepared body holds the quoted original: keep it below the
+  // caller's text instead of replacing it.
+  const draftPath = `${root}/messages/${encodeURIComponent(draftId)}`;
+  await keepPreparedBodyBelow(graph, draftPath, draft, patch);
+
   const finalMessage = (await graph
-    .api(`${root}/messages/${encodeURIComponent(draftId)}`)
+    .api(draftPath)
     .patch(patch)) as Record<string, unknown>;
 
   const summary = summarizeMessage(finalMessage);

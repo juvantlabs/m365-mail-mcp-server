@@ -11,6 +11,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`create_reply_draft` and `create_forward_draft` keep the original message when `body` is passed.** Graph's createReply / createReplyAll / createForward prepare a draft whose body already holds the quoted (or forwarded) message; the tools then PATCHed `body` with the caller's text, which replaced it, so the draft lost the thread. The caller's text now goes above the prepared content, as Outlook does: plain text is escaped and line-broken when the prepared body is HTML, HTML is inserted as is. Calls without `body` are unchanged, and so is the `[agent-draft] ` subject marker.
+
 ## [0.4.0] — download retention
 
 ### Changed

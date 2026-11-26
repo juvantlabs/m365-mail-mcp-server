@@ -8,9 +8,13 @@
  *      returns a fully populated draft with quoted history + To/Cc
  *      pre-filled from the parent.
  *   2. PATCH /me/messages/{new-id} with any body/subject/recipients
- *      overrides the caller supplied, PLUS an unconditional subject
+ *      the caller supplied, PLUS an unconditional subject
  *      PATCH to attach the Shield C4 `[agent-draft] ` marker to
  *      Graph's pre-filled `RE: <subject>`.
+ *
+ * `body` does not replace the prepared body: the caller's text is put
+ * above the quoted original (see prependToPreparedBody in _shared.ts),
+ * as Outlook does.
  *
  * Required Graph scope: `Mail.ReadWrite` (delegated).
  *
@@ -35,6 +39,7 @@ import {
   DRAFT_BODY_SCHEMA_PROPERTIES,
   buildMessageBody,
   ensureAgentDraftSubject,
+  keepPreparedBodyBelow,
 } from "./_shared.js";
 import {
   SHARED_USER_SCHEMA_PROPERTY,
@@ -50,7 +55,7 @@ import type { Tool, ToolDefinition, ToolHandler, ToolResponse } from "../types/t
 const definition: ToolDefinition = {
   name: "m365-mail:create_reply_draft",
   description:
-    "Create a reply (or reply-all) draft against an existing message. Graph pre-fills quoted history + To/Cc; supply `body` / `subject` / `to` / `cc` / `bcc` to override. Does NOT send. Set reply_all=true for reply-all. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to reply to a message in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the reply draft lands in the same mailbox's Drafts folder.",
+    "Create a reply (or reply-all) draft against an existing message. Graph pre-fills quoted history + To/Cc. Optional `body` is placed above the quoted original message (which is kept); `subject` / `to` / `cc` / `bcc` override the pre-filled values. Does NOT send. Set reply_all=true for reply-all. The Shield '[agent-draft] ' subject prefix is applied unconditionally. Pass `shared_user` to reply to a message in a shared / delegate mailbox (v0.2, requires Mail.ReadWrite.Shared); the reply draft lands in the same mailbox's Drafts folder.",
   inputSchema: {
     type: "object",
     properties: {
@@ -101,8 +106,13 @@ const handler: ToolHandler = async (
     patch.subject = ensureAgentDraftSubject(currentSubject);
   }
 
+  // Graph's prepared body holds the quoted original: keep it below the
+  // caller's text instead of replacing it.
+  const draftPath = `${root}/messages/${encodeURIComponent(draftId)}`;
+  await keepPreparedBodyBelow(graph, draftPath, draft, patch);
+
   const finalMessage = (await graph
-    .api(`${root}/messages/${encodeURIComponent(draftId)}`)
+    .api(draftPath)
     .patch(patch)) as Record<string, unknown>;
 
   const summary = summarizeMessage(finalMessage);

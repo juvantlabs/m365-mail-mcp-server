@@ -232,8 +232,8 @@ scope needed when `shared_user` is set.
 |---|---|---|---|
 | `create_draft` | `POST /me/messages` (draft; marked with `[agent-draft]` + `X-Juvant-Agent-Author`) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 | `update_draft` | `PATCH /me/messages/{id}` (refuses non-drafts) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
-| `create_reply_draft` | `POST /me/messages/{id}/createReply\|createReplyAll` + `PATCH` (marked subject) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
-| `create_forward_draft` | `POST /me/messages/{id}/createForward` + `PATCH` (marked subject) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `create_reply_draft` | `POST /me/messages/{id}/createReply\|createReplyAll` + `PATCH` (marked subject, `body` above the quoted original) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
+| `create_forward_draft` | `POST /me/messages/{id}/createForward` + `PATCH` (marked subject, `body` above the quoted original) | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 | `mark_read` | `PATCH /me/messages/{id}` `{ isRead }` | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 | `move_message` | `POST /me/messages/{id}/move` | `Mail.ReadWrite` | `Mail.ReadWrite.Shared` |
 
